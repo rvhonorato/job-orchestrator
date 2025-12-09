@@ -116,10 +116,15 @@ pub async fn retrieve(
         (status = 500, description = "Internal server error")
     ),
 )]
-pub async fn load() -> Result<Json<f32>, StatusCode> {
-    let mut sys = System::new_all();
-    sys.refresh_all();
-    Ok(Json(sys.global_cpu_usage()))
+pub async fn load() -> Json<f32> {
+    let mut sys = System::new();
+
+    // Measure delta
+    sys.refresh_cpu_all();
+    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+    sys.refresh_cpu_all();
+
+    Json(sys.global_cpu_usage())
 }
 
 #[cfg(test)]
@@ -127,10 +132,10 @@ mod tests {
     use super::*;
     use crate::config::loader::Config;
     use crate::routes::router::AppState;
-    use axum::body::to_bytes;
     use axum::body::Body;
-    use axum::{routing::get, routing::post, Router};
-    use http::{header, Request, StatusCode};
+    use axum::body::to_bytes;
+    use axum::{Router, routing::get, routing::post};
+    use http::{Request, StatusCode, header};
     use sqlx::SqlitePool;
     use std::path::PathBuf;
     use tempfile::tempdir;
