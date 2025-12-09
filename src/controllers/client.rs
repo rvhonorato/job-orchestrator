@@ -111,7 +111,7 @@ pub async fn retrieve(
     get,
     path = "/load",
     responses(
-        (status = 200, description = "Get the load of the client", body = usize),
+        (status = 200, description = "Get the load of the client", body = f32),
     ),
 )]
 pub async fn load() -> Json<f32> {
@@ -400,7 +400,7 @@ mod tests {
 
         // Parse the response body
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let cpu_usage: f32 = String::from_utf8(body.to_vec()).unwrap().parse().unwrap();
+        let cpu_usage: f32 = serde_json::from_slice(&body).unwrap();
 
         // CPU usage should be a valid percentage (0.0 to 100.0+)
         // Note: Can occasionally be slightly over 100 on some systems
