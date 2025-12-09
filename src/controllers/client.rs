@@ -112,11 +112,10 @@ pub async fn retrieve(
     path = "/load",
     responses(
         (status = 200, description = "Get the load of the client", body = usize),
-        (status = 400, description = "Could not get the load"),
-        (status = 500, description = "Internal server error")
     ),
 )]
 pub async fn load() -> Json<f32> {
+    // TODO: Implement cached background monitoring of CPU load
     let mut sys = System::new();
 
     // Measure delta
