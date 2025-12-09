@@ -19,12 +19,12 @@ jobs:
   coverage:
     needs: [build]
     runs-on: ubuntu-latest
+    container:
+      image: xd009642/tarpaulin:develop-nightly
+      options: --security-opt seccomp=unconfined
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Tarpaulin
-        run: cargo install cargo-tarpaulin
 
       - name: Generate code coverage
         run: |
