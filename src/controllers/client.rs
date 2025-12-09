@@ -6,6 +6,7 @@ use axum::{
     extract::{Json, Multipart, Path, State},
     http::StatusCode,
 };
+use sysinfo::System;
 
 #[utoipa::path(
     post,
@@ -105,6 +106,22 @@ pub async fn retrieve(
         _ => Err(StatusCode::ACCEPTED),
     }
 }
+
+#[utoipa::path(
+    get,
+    path = "/load",
+    responses(
+        (status = 200, description = "Get the load of the client", body = usize),
+        (status = 400, description = "Could not get the load"),
+        (status = 500, description = "Internal server error")
+    ),
+)]
+pub async fn load() -> Result<Json<f32>, StatusCode> {
+    let mut sys = System::new_all();
+    sys.refresh_all();
+    Ok(Json(sys.global_cpu_usage()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,5 +376,31 @@ mod tests {
         // Make the request
         let response = test_app.oneshot(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_load() {
+        // Setup the route - no state needed since load() doesn't use AppState
+        let test_app = Router::new().route("/load", get(load));
+
+        // Create the request
+        let req = Request::builder()
+            .method("GET")
+            .uri("/load")
+            .body(Body::empty())
+            .unwrap();
+
+        // Make the request
+        let response = test_app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Parse the response body
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let cpu_usage: f32 = String::from_utf8(body.to_vec()).unwrap().parse().unwrap();
+
+        // CPU usage should be a valid percentage (0.0 to 100.0+)
+        // Note: Can occasionally be slightly over 100 on some systems
+        assert!(cpu_usage >= 0.0, "CPU usage should be non-negative");
+        assert!(cpu_usage <= 200.0, "CPU usage should be reasonable");
     }
 }
