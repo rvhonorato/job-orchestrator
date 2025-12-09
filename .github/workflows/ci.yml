@@ -15,23 +15,7 @@ jobs:
         run: cargo build
       - name: Run tests
         run: cargo test
-
-  coverage:
-    needs: [build]
-    runs-on: ubuntu-latest
-    container:
-      image: xd009642/tarpaulin:develop-nightly
-      options: --security-opt seccomp=unconfined
-
-    steps:
-      - uses: actions/checkout@v4
-
+      - name: Install Tarpaulin
+        run: cargo install cargo-tarpaulin
       - name: Generate code coverage
-        run: |
-          cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
-
-      - name: Upload to codecov.io
-        uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7 # v5.5.1
-        with:
-          token: ${{secrets.CODECOV_TOKEN}}
-          fail_ci_if_error: true
+        run: cargo tarpaulin
