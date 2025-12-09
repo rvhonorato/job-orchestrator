@@ -11,11 +11,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - name: Build
-        run: cargo build
-      - name: Run tests
-        run: cargo test
-      - name: Install Tarpaulin
-        run: cargo install cargo-tarpaulin
-      - name: Generate code coverage
-        run: cargo tarpaulin
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build
+      - run: cargo test
+      - run: cargo install cargo-tarpaulin
+      - run: cargo tarpaulin
