@@ -1,13 +1,137 @@
-# Cargo
-debug/
-target/
-Cargo.lock
-**/*.rs.bk
-/target
-
 # project
 uploads
 dev
 orchestrator-wd-data
 *html
 db.sqlite
+
+# Cargo & Rust
+debug/
+target/
+Cargo.lock
+**/*.rs.bk
+**/*.rs.bk.*
+*.pdb
+
+# Rust documentation
+/doc/
+*.rustdoc
+
+# Build artifacts
+/release/
+/dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+
+# Project specific
+uploads/
+dev/
+orchestrator-wd-data/
+*html
+db.sqlite
+*.db
+*.sqlite3
+
+# IDE - VSCode
+.vscode/
+*.code-workspace
+.history/
+
+# IDE - IntelliJ / CLion / RustRover
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+.idea_modules/
+
+# IDE - Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# IDE - Vim
+*.swp
+*.swo
+*~
+.netrwhist
+
+# IDE - Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+.elc
+auto-save-list
+tramp
+
+# AI Tools - Claude (Desktop/Projects)
+.claude/
+
+# AI Tools - Cursor
+.cursor/
+.cursorrules
+
+# AI Tools - GitHub Copilot
+.github/copilot/
+
+# AI Tools - Codeium
+.codeium/
+
+# AI Tools - Continue
+.continue/
+
+# AI Tools - Windsurf
+.windsurf/
+
+# AI Tools - General
+.ai/
+.llm/
+*.ai-context
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+
+# Linux
+.directory
+.Trash-*
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets.*
+
+# Logs
+*.log
+logs/
+
+# Testing
+/coverage/
+*.profraw
+*.profdata
+
+# Backup files
+*.bak
+*.backup
+*.tmp
+*.temp
+
+# Package manager
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
