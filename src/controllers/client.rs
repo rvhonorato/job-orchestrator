@@ -42,6 +42,8 @@ pub async fn submit(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // FIXME: This sequence can cause a race condition
+    // - prepare -> update_loc, if prepare part fails, then `loc` will not be in the DB
     payload.prepare(&state.config.data_path).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -204,24 +206,23 @@ mod tests {
             "test01.txt".to_string(),
             b"hello this is a test file".to_vec(),
         );
-        
+
         // Set a temporary ID to create the directory structure
         payload.id = 1;
         let payload_loc = PathBuf::from(&config.data_path).join("1");
         payload.set_loc(payload_loc.clone());
-        
+
         // Manually create directory and files (simulating prepare)
         std::fs::create_dir_all(&payload_loc).expect("Failed to create payload directory");
         std::fs::write(payload_loc.join("test01.txt"), b"hello this is a test file")
             .expect("Failed to write test file");
-        
 
         // Now add to DB with the loc already set
         payload
             .add_to_db(&state.pool)
             .await
             .expect("Failed to add payload to DB");
-        
+
         payload
             .update_status(Status::Completed, &pool)
             .await
@@ -235,12 +236,12 @@ mod tests {
         payload
             .prepare(&state.config.data_path)
             .expect("Failed to prepare payload");
-        
+
         payload
             .add_to_db(&state.pool)
             .await
             .expect("Failed to add payload to DB");
-        
+
         payload
             .update_status(Status::Failed, &pool)
             .await
@@ -253,7 +254,7 @@ mod tests {
                 .with_state(state),
             complete_jobid,
             failed_jobid,
-            data_dir,  // Return tempdir to keep it alive
+            data_dir, // Return tempdir to keep it alive
         )
     }
 
@@ -310,7 +311,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_retrieve() {
-        let (test_app, valid_jobid, _, _tempdir) = setup_retrieve_test_router("/retrieve/{id}").await;
+        let (test_app, valid_jobid, _, _tempdir) =
+            setup_retrieve_test_router("/retrieve/{id}").await;
         let endpoint = format!("/retrieve/{}", valid_jobid);
 
         let req = Request::builder()
@@ -326,7 +328,8 @@ mod tests {
     }
     #[tokio::test]
     async fn test_retrieve_nocontent() {
-        let (test_app, _, failed_jobid, _tempdir) = setup_retrieve_test_router("/retrieve/{id}").await;
+        let (test_app, _, failed_jobid, _tempdir) =
+            setup_retrieve_test_router("/retrieve/{id}").await;
         let endpoint = format!("/retrieve/{}", failed_jobid);
 
         let req = Request::builder()
