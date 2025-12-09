@@ -140,12 +140,16 @@ impl PayloadQueue<'_> {
             .map(|row| {
                 let status: String = row.get("status");
                 let id: u32 = row.get("id");
-                let loc = Path::new(&self.config.data_path).join(id.to_string());
+                let loc: Option<String> = row.get("loc");
 
                 let mut payload = Payload::new();
                 payload.set_id(id);
                 payload.set_status(Status::from_string(&status));
-                payload.set_loc(loc);
+                // Use loc from database, or fall back to constructed path for backwards compatibility
+                let loc_path = loc
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| Path::new(&self.config.data_path).join(id.to_string()));
+                payload.set_loc(loc_path);
 
                 payload
             })

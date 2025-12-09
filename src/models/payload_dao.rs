@@ -54,18 +54,18 @@ impl Payload {
         Ok(())
     }
 
-    pub fn zip_directory(self) -> Vec<u8> {
+    pub fn zip_directory(self) -> Result<Vec<u8>, std::io::Error> {
         // Get everything from the `loc` and return it
         let result = self.loc.join("output.zip");
 
         // Check if output.zip exists to avoid re-zipping
         if !result.exists() {
             // Not exists, create it by zipping the directory
-            let _ = utils::io::zip_directory(&self.loc, &result);
+            utils::io::zip_directory(&self.loc, &result)?
         }
 
         // Read the output.zip file and return its content
-        std::fs::read(result).expect("Unable to read output.zip")
+        std::fs::read(&result)
     }
 }
 

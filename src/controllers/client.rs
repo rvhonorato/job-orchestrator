@@ -42,12 +42,20 @@ pub async fn submit(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // FIXME: This sequence can cause a race condition
+    // - prepare -> update_loc, if prepare part fails, then `loc` will not be in the DB
     payload.prepare(&state.config.data_path).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to prepare payload: {e}"),
         )
     })?;
+
+    // Update loc in database after prepare() sets it
+    payload
+        .update_loc(&state.pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     payload
         .update_status(Status::Prepared, &state.pool)
@@ -76,10 +84,7 @@ pub async fn retrieve(
     State(state): State<AppState>,
     Path(id): Path<u32>,
 ) -> Result<Vec<u8>, StatusCode> {
-    let mut payload = Payload::new();
-
-    payload
-        .retrieve_id(id, &state.pool)
+    let payload = Payload::retrieve_id(id, &state.pool)
         .await
         .map_err(|e| match e {
             sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
@@ -87,7 +92,13 @@ pub async fn retrieve(
         })?;
 
     match payload.status {
-        Status::Completed => Ok(payload.zip_directory()),
+        Status::Completed => match payload.zip_directory() {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                tracing::error!("Error compressing directory {:?}", e);
+                Err(StatusCode::INTERNAL_SERVER_ERROR)
+            }
+        },
         Status::Failed => Err(StatusCode::NO_CONTENT),
         Status::Cleaned => Err(StatusCode::NO_CONTENT),
         // TODO: Handle other status here
@@ -116,6 +127,7 @@ mod tests {
         CREATE TABLE IF NOT EXISTS payloads (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             status TEXT NOT NULL,
+            loc TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     "#,
@@ -175,8 +187,8 @@ mod tests {
         )
     }
 
-    async fn setup_retrieve_test_router(endpoint: &str) -> (Router, u32, u32) {
-        // Setup the route
+    async fn setup_retrieve_test_router(endpoint: &str) -> (Router, u32, u32, tempfile::TempDir) {
+        // Setup the route - keep tempdir alive by returning it
         let data_dir = tempdir().unwrap();
         let mut config = Config::new().unwrap();
         config.data_path = data_dir.path().to_str().unwrap().to_string();
@@ -184,33 +196,52 @@ mod tests {
         init_db(&pool).await.unwrap(); // Initialize the database schema
         let state = AppState {
             pool: pool.clone(),
-            config,
+            config: config.clone(),
         };
 
-        // Make a prepared payload in the database
+        // Make a completed payload in the database
+        // This simulates the full workflow: add input, get DB id, prepare files, mark as completed
         let mut payload = Payload::new();
-        payload
-            .add_to_db(&state.pool)
-            .await
-            .expect("Failed to add payload to DB");
         payload.add_input(
             "test01.txt".to_string(),
             b"hello this is a test file".to_vec(),
         );
+
+        // Set a temporary ID to create the directory structure
+        payload.id = 1;
+        let payload_loc = PathBuf::from(&config.data_path).join("1");
+        payload.set_loc(payload_loc.clone());
+
+        // Manually create directory and files (simulating prepare)
+        std::fs::create_dir_all(&payload_loc).expect("Failed to create payload directory");
+        std::fs::write(payload_loc.join("test01.txt"), b"hello this is a test file")
+            .expect("Failed to write test file");
+
+        // Now add to DB with the loc already set
         payload
-            .prepare(&state.config.data_path)
-            .expect("Failed to prepare payload");
+            .add_to_db(&state.pool)
+            .await
+            .expect("Failed to add payload to DB");
+
         payload
             .update_status(Status::Completed, &pool)
             .await
             .expect("Failed to update status");
         let complete_jobid = payload.id;
-        // Make a prepared payload in the database
+
+        // Make a failed payload in the database
+        // For a failed job, we still need a valid loc in DB
         let mut payload = Payload::new();
+        payload.set_id(2);
+        payload
+            .prepare(&state.config.data_path)
+            .expect("Failed to prepare payload");
+
         payload
             .add_to_db(&state.pool)
             .await
             .expect("Failed to add payload to DB");
+
         payload
             .update_status(Status::Failed, &pool)
             .await
@@ -223,6 +254,7 @@ mod tests {
                 .with_state(state),
             complete_jobid,
             failed_jobid,
+            data_dir, // Return tempdir to keep it alive
         )
     }
 
@@ -279,7 +311,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_retrieve() {
-        let (test_app, valid_jobid, _) = setup_retrieve_test_router("/retrieve/{id}").await;
+        let (test_app, valid_jobid, _, _tempdir) =
+            setup_retrieve_test_router("/retrieve/{id}").await;
         let endpoint = format!("/retrieve/{}", valid_jobid);
 
         let req = Request::builder()
@@ -295,7 +328,8 @@ mod tests {
     }
     #[tokio::test]
     async fn test_retrieve_nocontent() {
-        let (test_app, _, failed_jobid) = setup_retrieve_test_router("/retrieve/{id}").await;
+        let (test_app, _, failed_jobid, _tempdir) =
+            setup_retrieve_test_router("/retrieve/{id}").await;
         let endpoint = format!("/retrieve/{}", failed_jobid);
 
         let req = Request::builder()
@@ -312,7 +346,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_retrieve_not_found() {
-        let (test_app, _, _) = setup_retrieve_test_router("/retrieve/{id}").await;
+        let (test_app, _, _, _tempdir) = setup_retrieve_test_router("/retrieve/{id}").await;
         let endpoint = "/retrieve/999";
 
         // Create the request

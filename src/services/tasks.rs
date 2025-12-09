@@ -319,6 +319,12 @@ mod test {
             .prepare(&config.data_path)
             .expect("Failed to prepare payload");
 
+        // Update loc in database after prepare
+        payload
+            .update_loc(&pool)
+            .await
+            .expect("Failed to update payload loc");
+
         // Mark as prepared
         payload
             .update_status(Status::Prepared, &pool)
@@ -329,9 +335,7 @@ mod test {
         runner(pool.clone(), config).await;
 
         // Check the effects
-        let mut _payload = Payload::new();
-        _payload
-            .retrieve_id(payload.id, &pool)
+        let mut _payload = Payload::retrieve_id(payload.id, &pool)
             .await
             .expect("Failed to retrieve payload");
 
@@ -366,6 +370,12 @@ mod test {
             .prepare(&config.data_path)
             .expect("Failed to prepare payload");
 
+        // Update loc in database after prepare
+        payload
+            .update_loc(&pool)
+            .await
+            .expect("Failed to update payload loc");
+
         // Mark as prepared
         payload
             .update_status(Status::Prepared, &pool)
@@ -377,9 +387,7 @@ mod test {
 
         // Check the effects
         // NOTE: You need to retrieve the payload again to get the updated status
-        let mut _payload = Payload::new();
-        _payload
-            .retrieve_id(payload.id, &pool)
+        let mut _payload = Payload::retrieve_id(payload.id, &pool)
             .await
             .expect("Failed to retrieve payload");
 
