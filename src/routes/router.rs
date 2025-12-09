@@ -1,5 +1,5 @@
 use crate::config::loader::Config;
-use crate::controllers::client::{retrieve, submit};
+use crate::controllers::client::{load, retrieve, submit};
 use crate::controllers::health::__path_health;
 use crate::controllers::health::health;
 use crate::controllers::orchestrator::__path_download;
@@ -75,6 +75,7 @@ pub fn create_client_routes(pool: SqlitePool, config: Config) -> Router {
     let state = AppState { pool, config };
     Router::new()
         .route("/", get(ping))
+        .route("/load", get(load))
         .route("/submit", post(submit))
         .route("/retrieve/{id}", get(retrieve))
         .with_state(state)
