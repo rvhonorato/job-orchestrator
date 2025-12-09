@@ -121,7 +121,7 @@ pub async fn load() -> Json<f32> {
 
     // Measure delta
     sys.refresh_cpu_all();
-    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+    tokio::time::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL).await;
     sys.refresh_cpu_all();
 
     Json(sys.global_cpu_usage())
@@ -132,10 +132,10 @@ mod tests {
     use super::*;
     use crate::config::loader::Config;
     use crate::routes::router::AppState;
-    use axum::body::Body;
     use axum::body::to_bytes;
-    use axum::{Router, routing::get, routing::post};
-    use http::{Request, StatusCode, header};
+    use axum::body::Body;
+    use axum::{routing::get, routing::post, Router};
+    use http::{header, Request, StatusCode};
     use sqlx::SqlitePool;
     use std::path::PathBuf;
     use tempfile::tempdir;
