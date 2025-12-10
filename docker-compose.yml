@@ -1,9 +1,9 @@
 services:
   server:
+    container_name: server
     build:
       dockerfile: Dockerfile
       target: prod
-    container_name: server
     command: /job-orchestrator server
     environment:
       # Location inside the container where the data will be saved
@@ -13,8 +13,8 @@ services:
       # Max age of folders (in seconds)
       MAX_AGE: 172800
       # Services #==================================================#
-      SERVICE_EXAMPLE_UPLOAD_URL: http://example:9000/submit
-      SERVICE_EXAMPLE_DOWNLOAD_URL: http://example:9000/retrieve
+      SERVICE_EXAMPLE_UPLOAD_URL: http://client:9000/submit
+      SERVICE_EXAMPLE_DOWNLOAD_URL: http://client:9000/retrieve
       SERVICE_EXAMPLE_RUNS_PER_USER: 5
       #=============================================================#
     ports:
@@ -25,12 +25,12 @@ services:
       - api
       - public
 
-  example:
+  client:
+    container_name: client
     build:
       dockerfile: Dockerfile
       target: example
     command: /job-orchestrator client
-    container_name: example
     ports:
       - "9000:9000"
     networks:
