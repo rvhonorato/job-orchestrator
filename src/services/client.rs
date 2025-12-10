@@ -125,7 +125,7 @@ impl Endpoint for Client {
 
         match status {
             StatusCode::OK => {
-                let output_path = j.loc.join("download.zip");
+                let output_path = j.loc.join("output.zip");
                 let mut file =
                     File::create(&output_path)
                         .await
