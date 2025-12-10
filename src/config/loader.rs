@@ -112,3 +112,148 @@ impl Config {
             .map(|service| service.upload_url.as_str())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    // Helper to create a test config manually
+    fn create_test_config() -> Config {
+        let mut services = HashMap::new();
+
+        services.insert(
+            "test".to_string(),
+            Service {
+                name: "test".to_string(),
+                upload_url: "http://test.com/upload".to_string(),
+                download_url: "http://test.com/download".to_string(),
+                runs_per_user: 10,
+            },
+        );
+
+        Config {
+            services,
+            db_path: "/test/db.sqlite".to_string(),
+            data_path: "/test/data".to_string(),
+            max_age: Duration::from_secs(3600),
+        }
+    }
+
+    // ===== Service structure tests =====
+
+    #[test]
+    fn test_service_creation() {
+        let service = Service {
+            name: "test".to_string(),
+            upload_url: "http://example.com/upload".to_string(),
+            download_url: "http://example.com/download".to_string(),
+            runs_per_user: 5,
+        };
+
+        assert_eq!(service.name, "test");
+        assert_eq!(service.upload_url, "http://example.com/upload");
+        assert_eq!(service.download_url, "http://example.com/download");
+        assert_eq!(service.runs_per_user, 5);
+    }
+
+    // ===== get_download_url tests =====
+
+    #[test]
+    fn test_get_download_url_existing_service() {
+        let config = create_test_config();
+        let url = config.get_download_url("test");
+
+        assert_eq!(url, Some("http://test.com/download"));
+    }
+
+    #[test]
+    fn test_get_download_url_nonexistent_service() {
+        let config = create_test_config();
+        let url = config.get_download_url("nonexistent");
+
+        assert_eq!(url, None);
+    }
+
+    #[test]
+    fn test_get_download_url_empty_service_name() {
+        let config = create_test_config();
+        let url = config.get_download_url("");
+
+        assert_eq!(url, None);
+    }
+
+    // ===== get_upload_url tests =====
+
+    #[test]
+    fn test_get_upload_url_existing_service() {
+        let config = create_test_config();
+        let url = config.get_upload_url("test");
+
+        assert_eq!(url, Some("http://test.com/upload"));
+    }
+
+    #[test]
+    fn test_get_upload_url_nonexistent_service() {
+        let config = create_test_config();
+        let url = config.get_upload_url("nonexistent");
+
+        assert_eq!(url, None);
+    }
+
+    #[test]
+    fn test_get_upload_url_empty_service_name() {
+        let config = create_test_config();
+        let url = config.get_upload_url("");
+
+        assert_eq!(url, None);
+    }
+
+    // ===== Config structure tests =====
+
+    #[test]
+    fn test_config_structure() {
+        let config = create_test_config();
+
+        assert_eq!(config.services.len(), 1);
+        assert_eq!(config.db_path, "/test/db.sqlite");
+        assert_eq!(config.data_path, "/test/data");
+        assert_eq!(config.max_age, Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn test_config_multiple_services() {
+        let mut services = HashMap::new();
+
+        services.insert(
+            "service1".to_string(),
+            Service {
+                name: "service1".to_string(),
+                upload_url: "http://s1.com/upload".to_string(),
+                download_url: "http://s1.com/download".to_string(),
+                runs_per_user: 5,
+            },
+        );
+
+        services.insert(
+            "service2".to_string(),
+            Service {
+                name: "service2".to_string(),
+                upload_url: "http://s2.com/upload".to_string(),
+                download_url: "http://s2.com/download".to_string(),
+                runs_per_user: 10,
+            },
+        );
+
+        let config = Config {
+            services,
+            db_path: "/test/db.sqlite".to_string(),
+            data_path: "/test/data".to_string(),
+            max_age: Duration::from_secs(7200),
+        };
+
+        assert_eq!(config.services.len(), 2);
+        assert!(config.get_upload_url("service1").is_some());
+        assert!(config.get_upload_url("service2").is_some());
+    }
+}
