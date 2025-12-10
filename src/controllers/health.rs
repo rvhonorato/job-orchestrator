@@ -48,4 +48,29 @@ mod tests {
         assert_eq!(health_response.status, "ok");
         assert_eq!(health_response.database, "ok");
     }
+
+    #[tokio::test]
+    async fn test_health_database_failure() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let config = Config::new().unwrap();
+
+        // Close the pool to simulate database unavailability
+        pool.close().await;
+
+        let state = State(AppState { pool, config });
+
+        let response = health(state).await;
+        assert!(response.is_err());
+        assert_eq!(response.unwrap_err(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn test_health_invalid_connection() {
+        // Try to connect to an invalid database path
+        // This test verifies behavior when the database is genuinely unavailable
+        let result = SqlitePool::connect("sqlite:///nonexistent/path/db.sqlite").await;
+
+        // The connection itself should fail for an invalid path
+        assert!(result.is_err());
+    }
 }
