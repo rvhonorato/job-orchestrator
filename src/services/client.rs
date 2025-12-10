@@ -195,6 +195,8 @@ pub fn execute_payload(payload: &Payload) -> Result<(), ClientError> {
 mod test {
 
     use super::*;
+    use mockito::Server;
+    use std::fs;
 
     #[test]
     fn test_execute_payload() {
@@ -236,5 +238,317 @@ mod test {
         let result = execute_payload(&payload);
 
         assert!(matches!(result, Err(ClientError::Script)));
+    }
+
+    // ===== Endpoint trait tests =====
+
+    #[tokio::test]
+    async fn test_client_upload_success() {
+        let mut server = Server::new_async().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create a job with test files
+        let mut job = Job::new(temp_dir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+
+        // Create job directory and add test file
+        fs::create_dir_all(&job.loc).unwrap();
+        fs::write(job.loc.join("test.txt"), b"test content").unwrap();
+
+        // Mock server response
+        let mut mock_payload = Payload::new();
+        mock_payload.set_id(42);
+        mock_payload.set_status(crate::models::status_dto::Status::Prepared);
+        mock_payload.set_loc(temp_dir.path().to_path_buf());
+        let mock_response = serde_json::to_string(&mock_payload).unwrap();
+
+        let mock = server
+            .mock("POST", "/submit")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_response)
+            .create_async()
+            .await;
+
+        let client = Client;
+        let url = format!("{}/submit", server.url());
+        let result = client.upload(&job, &url).await;
+
+        mock.assert_async().await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 42);
+    }
+
+    #[tokio::test]
+    async fn test_client_upload_with_nested_files() {
+        let mut server = Server::new_async().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create a job with nested directory structure
+        let mut job = Job::new(temp_dir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+
+        // Create nested directories
+        fs::create_dir_all(job.loc.join("subdir1")).unwrap();
+        fs::create_dir_all(job.loc.join("subdir2/nested")).unwrap();
+        fs::write(job.loc.join("root.txt"), b"root file").unwrap();
+        fs::write(job.loc.join("subdir1/file1.txt"), b"file 1").unwrap();
+        fs::write(job.loc.join("subdir2/nested/file2.txt"), b"file 2").unwrap();
+
+        // Mock server response
+        let mut mock_payload = Payload::new();
+        mock_payload.set_id(100);
+        mock_payload.set_status(crate::models::status_dto::Status::Prepared);
+        mock_payload.set_loc(temp_dir.path().to_path_buf());
+        let mock_response = serde_json::to_string(&mock_payload).unwrap();
+
+        let mock = server
+            .mock("POST", "/submit")
+            .with_status(200)
+            .with_body(mock_response)
+            .create_async()
+            .await;
+
+        let client = Client;
+        let url = format!("{}/submit", server.url());
+        let result = client.upload(&job, &url).await;
+
+        mock.assert_async().await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 100);
+    }
+
+    #[tokio::test]
+    async fn test_client_upload_server_error() {
+        let mut server = Server::new_async().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mut job = Job::new(temp_dir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+        fs::create_dir_all(&job.loc).unwrap();
+        fs::write(job.loc.join("test.txt"), b"test").unwrap();
+
+        // Mock server error
+        let mock = server
+            .mock("POST", "/submit")
+            .with_status(500)
+            .with_body("Internal Server Error")
+            .create_async()
+            .await;
+
+        let client = Client;
+        let url = format!("{}/submit", server.url());
+        let result = client.upload(&job, &url).await;
+
+        mock.assert_async().await;
+        assert!(result.is_err());
+        match result {
+            Err(UploadError::UnexpectedStatus { status, body }) => {
+                assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+                assert_eq!(body, "Internal Server Error");
+            }
+            _ => panic!("Expected UnexpectedStatus error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_client_upload_invalid_json_response() {
+        let mut server = Server::new_async().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mut job = Job::new(temp_dir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+        fs::create_dir_all(&job.loc).unwrap();
+        fs::write(job.loc.join("test.txt"), b"test").unwrap();
+
+        // Mock server with invalid JSON
+        let mock = server
+            .mock("POST", "/submit")
+            .with_status(200)
+            .with_body("not valid json")
+            .create_async()
+            .await;
+
+        let client = Client;
+        let url = format!("{}/submit", server.url());
+        let result = client.upload(&job, &url).await;
+
+        mock.assert_async().await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(UploadError::DeserializationFailed(_))));
+    }
+
+    #[tokio::test]
+    async fn test_client_download_success() {
+        let mut server = Server::new_async().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mut job = Job::new(temp_dir.path().to_str().unwrap());
+        job.dest_id = 123;
+        fs::create_dir_all(&job.loc).unwrap();
+
+        // Mock server response with file content
+        let mock = server
+            .mock("GET", "/retrieve/123")
+            .with_status(200)
+            .with_body(b"test zip content")
+            .create_async()
+            .await;
+
+        let client = Client;
+        let url = format!("{}/retrieve", server.url());
+        let result = client.download(&job, &url).await;
+
+        mock.assert_async().await;
+        assert!(result.is_ok());
+
+        // Verify file was created
+        let output_path = job.loc.join("output.zip");
+        assert!(output_path.exists());
+        let content = fs::read(output_path).unwrap();
+        assert_eq!(content, b"test zip content");
+    }
+
+    #[tokio::test]
+    async fn test_client_download_accepted() {
+        let mut server = Server::new_async().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mut job = Job::new(temp_dir.path().to_str().unwrap());
+        job.dest_id = 456;
+        fs::create_dir_all(&job.loc).unwrap();
+
+        // Mock server response with ACCEPTED status
+        let mock = server
+            .mock("GET", "/retrieve/456")
+            .with_status(202)
+            .create_async()
+            .await;
+
+        let client = Client;
+        let url = format!("{}/retrieve", server.url());
+        let result = client.download(&job, &url).await;
+
+        mock.assert_async().await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(DownloadError::JobNotReady)));
+    }
+
+    #[tokio::test]
+    async fn test_client_download_no_content() {
+        let mut server = Server::new_async().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mut job = Job::new(temp_dir.path().to_str().unwrap());
+        job.dest_id = 789;
+        fs::create_dir_all(&job.loc).unwrap();
+
+        // Mock server response with NO_CONTENT status
+        let mock = server
+            .mock("GET", "/retrieve/789")
+            .with_status(204)
+            .create_async()
+            .await;
+
+        let client = Client;
+        let url = format!("{}/retrieve", server.url());
+        let result = client.download(&job, &url).await;
+
+        mock.assert_async().await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(DownloadError::JobFailedOrCleaned)));
+    }
+
+    #[tokio::test]
+    async fn test_client_download_not_found() {
+        let mut server = Server::new_async().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mut job = Job::new(temp_dir.path().to_str().unwrap());
+        job.dest_id = 999;
+        fs::create_dir_all(&job.loc).unwrap();
+
+        // Mock server response with NOT_FOUND status
+        let mock = server
+            .mock("GET", "/retrieve/999")
+            .with_status(404)
+            .create_async()
+            .await;
+
+        let client = Client;
+        let url = format!("{}/retrieve", server.url());
+        let result = client.download(&job, &url).await;
+
+        mock.assert_async().await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(DownloadError::JobNotFound)));
+    }
+
+    #[tokio::test]
+    async fn test_client_download_unexpected_status() {
+        let mut server = Server::new_async().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mut job = Job::new(temp_dir.path().to_str().unwrap());
+        job.dest_id = 111;
+        fs::create_dir_all(&job.loc).unwrap();
+
+        // Mock server response with unexpected status
+        let mock = server
+            .mock("GET", "/retrieve/111")
+            .with_status(418) // I'm a teapot
+            .with_body("Unexpected error")
+            .create_async()
+            .await;
+
+        let client = Client;
+        let url = format!("{}/retrieve", server.url());
+        let result = client.download(&job, &url).await;
+
+        mock.assert_async().await;
+        assert!(result.is_err());
+        match result {
+            Err(DownloadError::UnexpectedStatus { status, body }) => {
+                assert_eq!(status, StatusCode::IM_A_TEAPOT);
+                assert_eq!(body, "Unexpected error");
+            }
+            _ => panic!("Expected UnexpectedStatus error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_client_download_large_file() {
+        let mut server = Server::new_async().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mut job = Job::new(temp_dir.path().to_str().unwrap());
+        job.dest_id = 222;
+        fs::create_dir_all(&job.loc).unwrap();
+
+        // Create large content (1MB)
+        let large_content = vec![b'A'; 1024 * 1024];
+
+        let mock = server
+            .mock("GET", "/retrieve/222")
+            .with_status(200)
+            .with_body(&large_content)
+            .create_async()
+            .await;
+
+        let client = Client;
+        let url = format!("{}/retrieve", server.url());
+        let result = client.download(&job, &url).await;
+
+        mock.assert_async().await;
+        assert!(result.is_ok());
+
+        // Verify file size
+        let output_path = job.loc.join("output.zip");
+        let metadata = fs::metadata(output_path).unwrap();
+        assert_eq!(metadata.len(), 1024 * 1024);
     }
 }
