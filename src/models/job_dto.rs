@@ -139,9 +139,10 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify table exists by querying it
-        let query_result = sqlx::query("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'")
-            .fetch_one(&pool)
-            .await;
+        let query_result =
+            sqlx::query("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'")
+                .fetch_one(&pool)
+                .await;
         assert!(query_result.is_ok());
     }
 
@@ -297,7 +298,10 @@ mod tests {
         original_job.set_user_id(42);
         original_job.set_service("test_service".to_string());
         original_job.add_to_db(&pool).await.unwrap();
-        original_job.update_status(Status::Processing, &pool).await.unwrap();
+        original_job
+            .update_status(Status::Processing, &pool)
+            .await
+            .unwrap();
         original_job.update_dest_id(999, &pool).await.unwrap();
 
         // Retrieve it
@@ -339,7 +343,10 @@ mod tests {
         original_job.set_user_id(42);
         original_job.set_service("test_service".to_string());
         original_job.add_to_db(&pool).await.unwrap();
-        original_job.update_status(Status::Completed, &pool).await.unwrap();
+        original_job
+            .update_status(Status::Completed, &pool)
+            .await
+            .unwrap();
 
         let loc_str = original_job.loc.to_str().unwrap().to_string();
 
@@ -360,7 +367,9 @@ mod tests {
         let pool = setup_test_db().await;
 
         let mut job = Job::new("");
-        let result = job.retrieve_by_loc("/nonexistent/path".to_string(), &pool).await;
+        let result = job
+            .retrieve_by_loc("/nonexistent/path".to_string(), &pool)
+            .await;
 
         assert!(result.is_err());
         match result {

@@ -263,7 +263,10 @@ mod tests {
     fn test_config_new_with_env_vars() {
         // Set environment variables
         env::set_var("SERVICE_TESTENV_UPLOAD_URL", "http://testenv.com/upload");
-        env::set_var("SERVICE_TESTENV_DOWNLOAD_URL", "http://testenv.com/download");
+        env::set_var(
+            "SERVICE_TESTENV_DOWNLOAD_URL",
+            "http://testenv.com/download",
+        );
         env::set_var("SERVICE_TESTENV_RUNS_PER_USER", "15");
         env::set_var("DB_PATH", "/env/test/db.sqlite");
         env::set_var("DATA_PATH", "/env/test/data");
@@ -327,8 +330,14 @@ mod tests {
     #[test]
     fn test_config_new_default_runs_per_user() {
         // Set only URLs, not runs_per_user
-        env::set_var("SERVICE_DEFAULTRUNS_UPLOAD_URL", "http://default.com/upload");
-        env::set_var("SERVICE_DEFAULTRUNS_DOWNLOAD_URL", "http://default.com/download");
+        env::set_var(
+            "SERVICE_DEFAULTRUNS_UPLOAD_URL",
+            "http://default.com/upload",
+        );
+        env::set_var(
+            "SERVICE_DEFAULTRUNS_DOWNLOAD_URL",
+            "http://default.com/download",
+        );
 
         let config = Config::new().unwrap();
 
@@ -344,7 +353,10 @@ mod tests {
     fn test_config_new_service_name_lowercase() {
         // Service name should be converted to lowercase
         env::set_var("SERVICE_UPPERCASE_UPLOAD_URL", "http://upper.com/upload");
-        env::set_var("SERVICE_UPPERCASE_DOWNLOAD_URL", "http://upper.com/download");
+        env::set_var(
+            "SERVICE_UPPERCASE_DOWNLOAD_URL",
+            "http://upper.com/download",
+        );
 
         let config = Config::new().unwrap();
 
