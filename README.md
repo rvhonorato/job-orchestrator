@@ -125,14 +125,44 @@ stateDiagram-v2
     Cleaned --> [*]
 ```
 
-**Components:**
+#### Auto-Scaling Architecture (Planned Feature)
 
-- **Orchestrator Server** (port 5000): Receives job submissions, tracks state, manages quotas, and distributes work
-- **Orchestrator Client** (port 9000): Receives jobs from server, executes them locally, and returns results
-- **Database**: SQLite for job tracking and state management
-- **Filesystem**: Local storage for job files and results
+The orchestrator will support automatic scaling of client instances based on workload, creating and terminating cloud instances dynamically to handle varying job demands efficiently.
 
-Both server and client modes are provided by the same binary, configured via command-line arguments.
+```mermaid
+---
+config:
+  layout: dagre
+---
+flowchart TB
+ subgraph Server["Orchestrator Server"]
+        API["REST API"]
+        Queue["Queue Manager"]
+        AutoScaler["Auto-Scaler"]
+        ServicePool["Service Pool"]
+  end
+ subgraph Cloud["Cloud Provider"]
+        CloudAPI["Cloud API"]
+  end
+ subgraph Clients["Client Instances"]
+        Dynamic["Dynamic Clients<br>Auto-created"]
+        Static["Static Client<br>"]
+  end
+    User(["User/Web App"]) -- Submits/Retrieves --> API
+    API --> Queue
+    Queue -- Distribute jobs --> Clients
+    ServicePool <-- Monitors --> Queue
+    AutoScaler <-- Register/Trigger --> ServicePool
+    AutoScaler -- Scale Up/Down --> CloudAPI
+    CloudAPI -- Create/Terminate --> Clients
+
+    style AutoScaler fill:#ff9,stroke:#f60,stroke-width:3px
+    style ServicePool fill:#9f9,stroke:#060,stroke-width:2px
+    style CloudAPI fill:#99f,stroke:#006,stroke-width:2px
+    style Dynamic fill:#ffe,stroke:#cc0,stroke-width:2px,stroke-dasharray: 5 5
+```
+
+> Both server and client modes are provided by the same binary, configured via command-line arguments.
 
 ## Quick Start
 
@@ -256,12 +286,12 @@ Orchestrator is designed for scenarios requiring:
 
 **Planned Features**:
 
+- **Auto-Scaling**: Dynamic creation and termination of cloud-based client instances based on workload (see [Auto-Scaling Architecture diagram](#auto-scaling-architecture-planned-feature))
 - DIRAC Interware integration
 - SLURM direct integration
 - Enhanced monitoring and metrics
 - Job priority queues
 - Advanced scheduling policies
-- Client auto-discovery and registration
 
 ## Documentation
 
