@@ -69,68 +69,38 @@ flowchart TB
 
 ```mermaid
 sequenceDiagram
-      autonumber
-      participant User
-      participant ServerAPI as Server API
-      participant ServerDB as Server DB
-      participant ServerFS as Server FS
-      participant Sender as Sender Task
-      participant ClientAPI as Client API
-      participant ClientDB as Client DB
-      participant Runner as Runner Task
-      participant Bash
-      participant Getter as Getter Task
-      participant ClientFS
-      participant Cleaner
+    participant User
+    participant Server
+    participant Client
+    participant Executor
 
-      User->>ServerAPI: POST /upload (files, user_id, service)
-      ServerAPI->>ServerDB: Create Job (status: Queued)
-      ServerAPI->>ServerFS: Store files in UUID dir
-      ServerAPI-->>User: Return Job ID
+    User->>Server: POST /upload (files, user_id, service)
+    Server->>Server: Store job (status: Queued)
+    Server-->>User: Job ID
 
-      loop Every 500ms
-          Sender->>ServerDB: Query queued jobs (quota check)
-          Sender->>ServerDB: Update status: Processing
-          Sender->>ClientAPI: POST /submit (job files)
-          ClientAPI->>ClientDB: Create Payload (status: Prepared)
-          ClientAPI->>ClientFS: Store files
-          ClientAPI-->>Sender: Return Payload ID
-          Sender->>ServerDB: Update status: Submitted
-      end
+    Note over Server: Sender task (500ms interval)
+    Server->>Server: Update status: Processing
+    Server->>Client: POST /submit (job files)
+    Client->>Client: Store payload (status: Prepared)
+    Client-->>Server: Payload ID
+    Server->>Server: Update status: Submitted
 
-      loop Every 500ms (Client)
-          Runner->>ClientDB: Query prepared payloads
-          Runner->>Bash: Execute run.sh
-          Bash-->>Runner: Exit code
-          Runner->>ClientDB: Update status: Completed/Failed
-      end
+    Note over Client: Runner task (500ms interval)
+    Client->>Executor: Execute run.sh
+    Executor->>Executor: Process files
+    Executor-->>Client: Exit code
+    Client->>Client: Update status: Completed
 
-      loop Every 500ms (Server)
-          Getter->>ServerDB: Query submitted jobs
-          Getter->>ClientAPI: HEAD /retrieve/:id
-          ClientAPI-->>Getter: 200 (ready) or 202 (processing)
+    Note over Server: Getter task (500ms interval)
+    Server->>Client: GET /retrieve/:id
+    Client-->>Server: ZIP results
+    Server->>Server: Store results, status: Completed
 
-          alt Job Ready
-              Getter->>ClientAPI: GET /retrieve/:id
-              ClientAPI-->>Getter: ZIP file
-              Getter->>ServerFS: Store results
-              Getter->>ServerDB: Update status: Completed
-          end
-      end
+    User->>Server: GET /download/:id
+    Server-->>User: results.zip
 
-      User->>ServerAPI: HEAD /download/:id
-      ServerAPI->>ServerDB: Query status
-      ServerAPI-->>User: 200/202/204
-
-      User->>ServerAPI: GET /download/:id
-      ServerAPI->>ServerFS: Read ZIP
-      ServerAPI-->>User: results.zip
-
-      loop Every 60s
-          Cleaner->>ServerFS: Find old directories
-          Cleaner->>ServerDB: Update status: Cleaned
-          Cleaner->>ServerFS: Remove directory
-      end
+    Note over Server: Cleaner task (60s interval)
+    Server->>Server: Remove jobs older than MAX_AGE
 ```
 
 #### Job status state machine
