@@ -27,15 +27,102 @@ job-orchestrator is a central component of [WeNMR](https://wenmr.science.uu.nl),
 
 ### Architecture
 
+#### High-level overview
+
 ```mermaid
-flowchart LR
-    B([User]) --> C[Web Application]
-    C[Web Application] <--> Y[(Database)]
-    C --> X{{Orchestrator Server<br/>Port 5000}}
-    X -->|REST API| D[Orchestrator Client<br/>prodigy:9000]
-    X -->|REST API| E[Orchestrator Client<br/>disvis:9000]
-    X -->|REST API| G[Orchestrator Client<br/>other services:9000]
-    E -.->|optional| H[HPC/SLURM]
+flowchart TB
+ subgraph Tasks["Background Tasks"]
+        Sender["Sender<br>500ms"]
+        Getter["Getter<br>500ms"]
+        Cleaner["Cleaner<br>60s"]
+  end
+ subgraph Server["Orchestrator Server"]
+        API["REST API<br>upload/download"]
+        DB[("SQLite<br>Persistent")]
+        FS[/"Filesystem<br>Job Storage"/]
+        Tasks
+        Queue["Queue Manager<br>Quota Enforcement"]
+  end
+ subgraph Client["Client Service"]
+        ClientAPI["REST API<br>submit/retrieve/load"]
+        ClientDB[("SQLite<br>In-Memory")]
+        ClientFS[/"Working Dir"/]
+        Runner["Runner Task<br>500ms"]
+        Executor["Bash Executor<br>run.sh"]
+  end
+    User(["User/Web App"]) -- POST /upload --> API
+    User -- GET /download/:id --> API
+    API --> DB & FS
+    DB --> Queue
+    Queue --> Sender
+    Sender -- POST /submit --> ClientAPI
+    Getter -- GET /retrieve/:id --> ClientAPI
+    Getter --> FS
+    Cleaner --> DB & FS
+    ClientAPI --> ClientDB
+    ClientDB --> Runner
+    Runner --> Executor
+    Executor --> ClientFS
+```
+
+#### Job Lifecycle sequence
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Server
+    participant Client
+    participant Executor
+
+    User->>Server: POST /upload (files, user_id, service)
+    Server->>Server: Store job (status: Queued)
+    Server-->>User: Job ID
+
+    Note over Server: Sender task (500ms interval)
+    Server->>Server: Update status: Processing
+    Server->>Client: POST /submit (job files)
+    Client->>Client: Store payload (status: Prepared)
+    Client-->>Server: Payload ID
+    Server->>Server: Update status: Submitted
+
+    Note over Client: Runner task (500ms interval)
+    Client->>Executor: Execute run.sh
+    Executor->>Executor: Process files
+    Executor-->>Client: Exit code
+    Client->>Client: Update status: Completed
+
+    Note over Server: Getter task (500ms interval)
+    Server->>Client: GET /retrieve/:id
+    Client-->>Server: ZIP results
+    Server->>Server: Store results, status: Completed
+
+    User->>Server: GET /download/:id
+    Server-->>User: results.zip
+
+    Note over Server: Cleaner task (60s interval)
+    Server->>Server: Remove jobs older than MAX_AGE
+```
+
+#### Job status state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> Queued: Job submitted
+
+    Queued --> Processing: Sender picks up job
+    Processing --> Submitted: Sent to client
+    Processing --> Failed: Client unreachable
+
+    Submitted --> Completed: Execution successful
+    Submitted --> Unknown: Retrieval failed or execution failed
+
+    Unknown --> Completed: Retry successful
+
+    Completed --> Cleaned: After MAX_AGE
+    Failed --> Cleaned: After MAX_AGE
+    Unknown --> Cleaned: After MAX_AGE (if applicable)
+
+    Cleaned --> [*]
 ```
 
 **Components:**
