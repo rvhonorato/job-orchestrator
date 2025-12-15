@@ -27,15 +27,133 @@ job-orchestrator is a central component of [WeNMR](https://wenmr.science.uu.nl),
 
 ### Architecture
 
+#### High-level overview
+
 ```mermaid
-flowchart LR
-    B([User]) --> C[Web Application]
-    C[Web Application] <--> Y[(Database)]
-    C --> X{{Orchestrator Server<br/>Port 5000}}
-    X -->|REST API| D[Orchestrator Client<br/>prodigy:9000]
-    X -->|REST API| E[Orchestrator Client<br/>disvis:9000]
-    X -->|REST API| G[Orchestrator Client<br/>other services:9000]
-    E -.->|optional| H[HPC/SLURM]
+flowchart TB
+ subgraph Tasks["Background Tasks"]
+        Sender["Sender<br>500ms"]
+        Getter["Getter<br>500ms"]
+        Cleaner["Cleaner<br>60s"]
+  end
+ subgraph Server["Orchestrator Server"]
+        API["REST API<br>upload/download"]
+        DB[("SQLite<br>Persistent")]
+        FS[/"Filesystem<br>Job Storage"/]
+        Tasks
+        Queue["Queue Manager<br>Quota Enforcement"]
+  end
+ subgraph Client["Client Service"]
+        ClientAPI["REST API<br>submit/retrieve/load"]
+        ClientDB[("SQLite<br>In-Memory")]
+        ClientFS[/"Working Dir"/]
+        Runner["Runner Task<br>500ms"]
+        Executor["Bash Executor<br>run.sh"]
+  end
+    User(["User/Web App"]) -- POST /upload --> API
+    User -- GET /download/:id --> API
+    API --> DB & FS
+    DB --> Queue
+    Queue --> Sender
+    Sender -- POST /submit --> ClientAPI
+    Getter -- GET /retrieve/:id --> ClientAPI
+    Getter --> FS
+    Cleaner --> DB & FS
+    ClientAPI --> ClientDB
+    ClientDB --> Runner
+    Runner --> Executor
+    Executor --> ClientFS
+```
+
+#### Job Lifecycle sequence
+
+```mermaid
+sequenceDiagram
+      autonumber
+      participant User
+      participant ServerAPI as Server API
+      participant ServerDB as Server DB
+      participant ServerFS as Server FS
+      participant Sender as Sender Task
+      participant ClientAPI as Client API
+      participant ClientDB as Client DB
+      participant Runner as Runner Task
+      participant Bash
+      participant Getter as Getter Task
+      participant ClientFS
+      participant Cleaner
+
+      User->>ServerAPI: POST /upload (files, user_id, service)
+      ServerAPI->>ServerDB: Create Job (status: Queued)
+      ServerAPI->>ServerFS: Store files in UUID dir
+      ServerAPI-->>User: Return Job ID
+
+      loop Every 500ms
+          Sender->>ServerDB: Query queued jobs (quota check)
+          Sender->>ServerDB: Update status: Processing
+          Sender->>ClientAPI: POST /submit (job files)
+          ClientAPI->>ClientDB: Create Payload (status: Prepared)
+          ClientAPI->>ClientFS: Store files
+          ClientAPI-->>Sender: Return Payload ID
+          Sender->>ServerDB: Update status: Submitted
+      end
+
+      loop Every 500ms (Client)
+          Runner->>ClientDB: Query prepared payloads
+          Runner->>Bash: Execute run.sh
+          Bash-->>Runner: Exit code
+          Runner->>ClientDB: Update status: Completed/Failed
+      end
+
+      loop Every 500ms (Server)
+          Getter->>ServerDB: Query submitted jobs
+          Getter->>ClientAPI: HEAD /retrieve/:id
+          ClientAPI-->>Getter: 200 (ready) or 202 (processing)
+
+          alt Job Ready
+              Getter->>ClientAPI: GET /retrieve/:id
+              ClientAPI-->>Getter: ZIP file
+              Getter->>ServerFS: Store results
+              Getter->>ServerDB: Update status: Completed
+          end
+      end
+
+      User->>ServerAPI: HEAD /download/:id
+      ServerAPI->>ServerDB: Query status
+      ServerAPI-->>User: 200/202/204
+
+      User->>ServerAPI: GET /download/:id
+      ServerAPI->>ServerFS: Read ZIP
+      ServerAPI-->>User: results.zip
+
+      loop Every 60s
+          Cleaner->>ServerFS: Find old directories
+          Cleaner->>ServerDB: Update status: Cleaned
+          Cleaner->>ServerFS: Remove directory
+      end
+```
+
+#### Job status state machine
+
+```mermaid
+stateDiagram-v2
+      [*] --> Queued: Job submitted
+
+      Queued --> Processing: Sender picks up job
+      Processing --> Submitted: Sent to client
+      Processing --> Failed: Client unreachable
+
+      Submitted --> Completed: Execution successful
+      Submitted --> Unknown: Retrieval failed
+      Submitted --> Failed: Execution failed
+
+      Unknown --> Completed: Retry successful
+      Unknown --> Failed: Max retries
+
+      Completed --> Cleaned: After MAX_AGE
+      Failed --> Cleaned: After MAX_AGE
+
+      Cleaned --> [*]
 ```
 
 **Components:**
