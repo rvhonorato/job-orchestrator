@@ -1,4 +1,4 @@
-name: CI
+name: ci
 
 on: [push]
 
@@ -6,7 +6,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
+  tests:
     runs-on: ubuntu-latest
 
     steps:
