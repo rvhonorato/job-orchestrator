@@ -107,23 +107,22 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-      [*] --> Queued: Job submitted
+    [*] --> Queued: Job submitted
 
-      Queued --> Processing: Sender picks up job
-      Processing --> Submitted: Sent to client
-      Processing --> Failed: Client unreachable
+    Queued --> Processing: Sender picks up job
+    Processing --> Submitted: Sent to client
+    Processing --> Failed: Client unreachable
 
-      Submitted --> Completed: Execution successful
-      Submitted --> Unknown: Retrieval failed
-      Submitted --> Failed: Execution failed
+    Submitted --> Completed: Execution successful
+    Submitted --> Unknown: Retrieval failed or execution failed
 
-      Unknown --> Completed: Retry successful
-      Unknown --> Failed: Max retries
+    Unknown --> Completed: Retry successful
 
-      Completed --> Cleaned: After MAX_AGE
-      Failed --> Cleaned: After MAX_AGE
+    Completed --> Cleaned: After MAX_AGE
+    Failed --> Cleaned: After MAX_AGE
+    Unknown --> Cleaned: After MAX_AGE (if applicable)
 
-      Cleaned --> [*]
+    Cleaned --> [*]
 ```
 
 **Components:**
