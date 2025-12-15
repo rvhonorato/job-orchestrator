@@ -155,11 +155,6 @@ flowchart TB
     AutoScaler <-- Register/Trigger --> ServicePool
     AutoScaler -- Scale Up/Down --> CloudAPI
     CloudAPI -- Create/Terminate --> Clients
-
-    style AutoScaler fill:#ff9,stroke:#f60,stroke-width:3px
-    style ServicePool fill:#9f9,stroke:#060,stroke-width:2px
-    style CloudAPI fill:#99f,stroke:#006,stroke-width:2px
-    style Dynamic fill:#ffe,stroke:#cc0,stroke-width:2px,stroke-dasharray: 5 5
 ```
 
 > Both server and client modes are provided by the same binary, configured via command-line arguments.
