@@ -407,4 +407,215 @@ mod tests {
         assert!(cpu_usage >= 0.0, "CPU usage should be non-negative");
         assert!(cpu_usage <= 200.0, "CPU usage should be reasonable");
     }
+
+    // ===== Additional submit tests =====
+
+    #[tokio::test]
+    async fn test_submit_no_files() {
+        let endpoint = "/submit";
+        let (test_app, _) = setup_submit_test_router(endpoint).await;
+
+        let boundary = format!("----Boundary{}", Uuid::new_v4());
+        let mut body = Vec::new();
+        // No files, just end boundary
+        body.extend(format!("--{boundary}--\r\n").as_bytes());
+
+        let req = Request::builder()
+            .method("POST")
+            .uri(endpoint)
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = test_app.oneshot(req).await.unwrap();
+        // Should succeed even with no files
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_submit_sanitizes_filename() {
+        let endpoint = "/submit";
+        let (test_app, _) = setup_submit_test_router(endpoint).await;
+
+        let boundary = format!("----Boundary{}", Uuid::new_v4());
+        let mut body = Vec::new();
+        // File with path traversal attempt
+        body.extend(form_text_file(
+            &boundary,
+            "file",
+            "../../../etc/passwd",
+            "malicious content",
+        ));
+        body.extend(format!("--{boundary}--\r\n").as_bytes());
+
+        let req = Request::builder()
+            .method("POST")
+            .uri(endpoint)
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = test_app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let payload_loc = json["loc"].as_str().unwrap();
+
+        // Verify the filename was sanitized to just "passwd"
+        let saved_file = PathBuf::from(payload_loc).join("passwd");
+        assert!(saved_file.exists());
+    }
+
+    // ===== Additional retrieve tests =====
+
+    #[tokio::test]
+    async fn test_retrieve_pending_status() {
+        let data_dir = tempdir().unwrap();
+        let mut config = Config::new().unwrap();
+        config.data_path = data_dir.path().to_str().unwrap().to_string();
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        let state = AppState {
+            pool: pool.clone(),
+            config: config.clone(),
+        };
+
+        let mut payload = Payload::new();
+        payload
+            .prepare(&state.config.data_path)
+            .expect("Failed to prepare");
+        payload.add_to_db(&pool).await.expect("Failed to add to db");
+        payload
+            .update_status(Status::Pending, &pool)
+            .await
+            .expect("Failed to update status");
+
+        let app = Router::new()
+            .route("/retrieve/{id}", get(retrieve))
+            .with_state(state);
+
+        let req = Request::builder()
+            .method("GET")
+            .uri(format!("/retrieve/{}", payload.id))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_processing_status() {
+        let data_dir = tempdir().unwrap();
+        let mut config = Config::new().unwrap();
+        config.data_path = data_dir.path().to_str().unwrap().to_string();
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        let state = AppState {
+            pool: pool.clone(),
+            config: config.clone(),
+        };
+
+        let mut payload = Payload::new();
+        payload
+            .prepare(&state.config.data_path)
+            .expect("Failed to prepare");
+        payload.add_to_db(&pool).await.expect("Failed to add to db");
+        payload
+            .update_status(Status::Processing, &pool)
+            .await
+            .expect("Failed to update status");
+
+        let app = Router::new()
+            .route("/retrieve/{id}", get(retrieve))
+            .with_state(state);
+
+        let req = Request::builder()
+            .method("GET")
+            .uri(format!("/retrieve/{}", payload.id))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_cleaned_status() {
+        let data_dir = tempdir().unwrap();
+        let mut config = Config::new().unwrap();
+        config.data_path = data_dir.path().to_str().unwrap().to_string();
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        let state = AppState {
+            pool: pool.clone(),
+            config: config.clone(),
+        };
+
+        let mut payload = Payload::new();
+        payload
+            .prepare(&state.config.data_path)
+            .expect("Failed to prepare");
+        payload.add_to_db(&pool).await.expect("Failed to add to db");
+        payload
+            .update_status(Status::Cleaned, &pool)
+            .await
+            .expect("Failed to update status");
+
+        let app = Router::new()
+            .route("/retrieve/{id}", get(retrieve))
+            .with_state(state);
+
+        let req = Request::builder()
+            .method("GET")
+            .uri(format!("/retrieve/{}", payload.id))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_prepared_status() {
+        let data_dir = tempdir().unwrap();
+        let mut config = Config::new().unwrap();
+        config.data_path = data_dir.path().to_str().unwrap().to_string();
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        let state = AppState {
+            pool: pool.clone(),
+            config: config.clone(),
+        };
+
+        let mut payload = Payload::new();
+        payload
+            .prepare(&state.config.data_path)
+            .expect("Failed to prepare");
+        payload.add_to_db(&pool).await.expect("Failed to add to db");
+        payload
+            .update_status(Status::Prepared, &pool)
+            .await
+            .expect("Failed to update status");
+
+        let app = Router::new()
+            .route("/retrieve/{id}", get(retrieve))
+            .with_state(state);
+
+        let req = Request::builder()
+            .method("GET")
+            .uri(format!("/retrieve/{}", payload.id))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+    }
 }

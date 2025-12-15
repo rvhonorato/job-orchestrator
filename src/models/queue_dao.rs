@@ -30,3 +30,100 @@ impl PayloadQueue<'_> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::loader::Config;
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    fn create_test_config() -> Config {
+        Config {
+            services: HashMap::new(),
+            db_path: "/test/db.sqlite".to_string(),
+            data_path: "/test/data".to_string(),
+            max_age: Duration::from_secs(3600),
+        }
+    }
+
+    // ===== Queue tests =====
+
+    #[test]
+    fn test_queue_new() {
+        let config = create_test_config();
+        let queue = Queue::new(&config);
+
+        assert_eq!(queue.jobs.len(), 0);
+        assert_eq!(queue.config.db_path, "/test/db.sqlite");
+    }
+
+    #[test]
+    fn test_queue_new_empty_jobs() {
+        let config = create_test_config();
+        let queue = Queue::new(&config);
+
+        assert!(queue.jobs.is_empty());
+    }
+
+    #[test]
+    fn test_queue_references_config() {
+        let config = create_test_config();
+        let queue = Queue::new(&config);
+
+        // Verify that the queue references the same config
+        assert_eq!(queue.config.data_path, config.data_path);
+        assert_eq!(queue.config.db_path, config.db_path);
+        assert_eq!(queue.config.max_age, config.max_age);
+    }
+
+    // ===== PayloadQueue tests =====
+
+    #[test]
+    fn test_payload_queue_new() {
+        let config = create_test_config();
+        let queue = PayloadQueue::new(&config);
+
+        assert_eq!(queue.jobs.len(), 0);
+        assert_eq!(queue.config.db_path, "/test/db.sqlite");
+    }
+
+    #[test]
+    fn test_payload_queue_new_empty_jobs() {
+        let config = create_test_config();
+        let queue = PayloadQueue::new(&config);
+
+        assert!(queue.jobs.is_empty());
+    }
+
+    #[test]
+    fn test_payload_queue_references_config() {
+        let config = create_test_config();
+        let queue = PayloadQueue::new(&config);
+
+        // Verify that the queue references the same config
+        assert_eq!(queue.config.data_path, config.data_path);
+        assert_eq!(queue.config.db_path, config.db_path);
+        assert_eq!(queue.config.max_age, config.max_age);
+    }
+
+    #[test]
+    fn test_multiple_queues_same_config() {
+        let config = create_test_config();
+        let queue1 = Queue::new(&config);
+        let queue2 = Queue::new(&config);
+
+        // Both queues should reference the same config
+        assert_eq!(queue1.config.db_path, queue2.config.db_path);
+    }
+
+    #[test]
+    fn test_multiple_payload_queues_same_config() {
+        let config = create_test_config();
+        let queue1 = PayloadQueue::new(&config);
+        let queue2 = PayloadQueue::new(&config);
+
+        // Both queues should reference the same config
+        assert_eq!(queue1.config.db_path, queue2.config.db_path);
+    }
+}

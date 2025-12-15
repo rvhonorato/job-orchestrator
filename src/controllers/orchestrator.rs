@@ -455,4 +455,308 @@ mod tests {
             Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
         }
     }
+
+    // ===== Additional upload error cases =====
+
+    #[tokio::test]
+    async fn test_upload_missing_user_id() {
+        let data_dir = tempdir().unwrap();
+        let mut config = Config::new().unwrap();
+        config.data_path = data_dir.path().to_str().unwrap().to_string();
+        config.services = HashMap::from([(
+            String::from("test-service"),
+            Service {
+                name: String::from("test-service"),
+                upload_url: String::from("http://localhost/upload"),
+                download_url: String::from("http://localhost/download"),
+                runs_per_user: 5,
+            },
+        )]);
+
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        let state = AppState { pool, config };
+
+        let app = Router::new()
+            .route("/upload", post(upload))
+            .with_state(state);
+
+        let boundary = format!("----Boundary{}", Uuid::new_v4());
+        let mut body = Vec::new();
+        body.extend(form_field(&boundary, "service", "test-service"));
+        // Missing user_id field
+        body.extend(form_file(
+            &boundary,
+            "file",
+            "test.txt",
+            "application/octet-stream",
+            b"test data",
+        ));
+        body.extend(format!("--{boundary}--\r\n").as_bytes());
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/upload")
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_upload_invalid_user_id_format() {
+        let data_dir = tempdir().unwrap();
+        let mut config = Config::new().unwrap();
+        config.data_path = data_dir.path().to_str().unwrap().to_string();
+        config.services = HashMap::from([(
+            String::from("test-service"),
+            Service {
+                name: String::from("test-service"),
+                upload_url: String::from("http://localhost/upload"),
+                download_url: String::from("http://localhost/download"),
+                runs_per_user: 5,
+            },
+        )]);
+
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        let state = AppState { pool, config };
+
+        let app = Router::new()
+            .route("/upload", post(upload))
+            .with_state(state);
+
+        let boundary = format!("----Boundary{}", Uuid::new_v4());
+        let mut body = Vec::new();
+        body.extend(form_field(&boundary, "service", "test-service"));
+        body.extend(form_field(&boundary, "user_id", "not_a_number")); // Invalid user_id
+        body.extend(form_file(
+            &boundary,
+            "file",
+            "test.txt",
+            "application/octet-stream",
+            b"test data",
+        ));
+        body.extend(format!("--{boundary}--\r\n").as_bytes());
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/upload")
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_upload_missing_service() {
+        let data_dir = tempdir().unwrap();
+        let mut config = Config::new().unwrap();
+        config.data_path = data_dir.path().to_str().unwrap().to_string();
+
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        let state = AppState { pool, config };
+
+        let app = Router::new()
+            .route("/upload", post(upload))
+            .with_state(state);
+
+        let boundary = format!("----Boundary{}", Uuid::new_v4());
+        let mut body = Vec::new();
+        // Missing service field
+        body.extend(form_field(&boundary, "user_id", "42"));
+        body.extend(form_file(
+            &boundary,
+            "file",
+            "test.txt",
+            "application/octet-stream",
+            b"test data",
+        ));
+        body.extend(format!("--{boundary}--\r\n").as_bytes());
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/upload")
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_upload_no_files() {
+        let data_dir = tempdir().unwrap();
+        let mut config = Config::new().unwrap();
+        config.data_path = data_dir.path().to_str().unwrap().to_string();
+        config.services = HashMap::from([(
+            String::from("test-service"),
+            Service {
+                name: String::from("test-service"),
+                upload_url: String::from("http://localhost/upload"),
+                download_url: String::from("http://localhost/download"),
+                runs_per_user: 5,
+            },
+        )]);
+
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        let state = AppState { pool, config };
+
+        let app = Router::new()
+            .route("/upload", post(upload))
+            .with_state(state);
+
+        let boundary = format!("----Boundary{}", Uuid::new_v4());
+        let mut body = Vec::new();
+        body.extend(form_field(&boundary, "service", "test-service"));
+        body.extend(form_field(&boundary, "user_id", "42"));
+        // No files, only text fields
+        body.extend(format!("--{boundary}--\r\n").as_bytes());
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/upload")
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        // Should succeed even with no files
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_upload_special_characters_filename() {
+        let data_dir = tempdir().unwrap();
+        let mut config = Config::new().unwrap();
+        config.data_path = data_dir.path().to_str().unwrap().to_string();
+        config.services = HashMap::from([(
+            String::from("test-service"),
+            Service {
+                name: String::from("test-service"),
+                upload_url: String::from("http://localhost/upload"),
+                download_url: String::from("http://localhost/download"),
+                runs_per_user: 5,
+            },
+        )]);
+
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        let state = AppState { pool, config };
+
+        let app = Router::new()
+            .route("/upload", post(upload))
+            .with_state(state);
+
+        let boundary = format!("----Boundary{}", Uuid::new_v4());
+        let mut body = Vec::new();
+        body.extend(form_field(&boundary, "service", "test-service"));
+        body.extend(form_field(&boundary, "user_id", "42"));
+        // File with path traversal attempt
+        body.extend(form_file(
+            &boundary,
+            "file",
+            "../../etc/passwd",
+            "text/plain",
+            b"malicious content",
+        ));
+        body.extend(format!("--{boundary}--\r\n").as_bytes());
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/upload")
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let job_loc = json["loc"].as_str().unwrap();
+
+        // Verify the file was sanitized and saved as "passwd" not in /etc
+        let saved_file = PathBuf::from(job_loc).join("passwd");
+        assert!(saved_file.exists());
+        assert!(saved_file.starts_with(data_dir.path()));
+    }
+
+    // ===== Additional download status tests =====
+
+    #[tokio::test]
+    async fn test_download_pending_job() {
+        let config = Config::new().unwrap();
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        let mut job = Job::new("");
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Pending, &pool).await.unwrap();
+
+        let state = State(AppState { pool, config });
+        let path = Path(job.id);
+
+        match download(state, path).await {
+            Ok(_) => panic!("Expected error"),
+            Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_download_processing_job() {
+        let config = Config::new().unwrap();
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        let mut job = Job::new("");
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Processing, &pool).await.unwrap();
+
+        let state = State(AppState { pool, config });
+        let path = Path(job.id);
+
+        match download(state, path).await {
+            Ok(_) => panic!("Expected error"),
+            Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_download_submitted_job() {
+        let config = Config::new().unwrap();
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        let mut job = Job::new("");
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Submitted, &pool).await.unwrap();
+
+        let state = State(AppState { pool, config });
+        let path = Path(job.id);
+
+        match download(state, path).await {
+            Ok(_) => panic!("Expected error"),
+            Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
+        }
+    }
 }
