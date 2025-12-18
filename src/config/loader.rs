@@ -285,6 +285,7 @@ mod tests {
         env::set_var("DB_PATH", "/env/test/db.sqlite");
         env::set_var("DATA_PATH", "/env/test/data");
         env::set_var("MAX_AGE", "7200");
+        env::set_var("PORT", "1111");
 
         let config = Config::new().unwrap();
 
@@ -299,6 +300,7 @@ mod tests {
         assert_eq!(config.db_path, "/env/test/db.sqlite");
         assert_eq!(config.data_path, "/env/test/data");
         assert_eq!(config.max_age, Duration::from_secs(7200));
+        assert_eq!(config.port, 1111);
 
         // Cleanup
         env::remove_var("SERVICE_TESTENV_UPLOAD_URL");
@@ -307,6 +309,7 @@ mod tests {
         env::remove_var("DB_PATH");
         env::remove_var("DATA_PATH");
         env::remove_var("MAX_AGE");
+        env::remove_var("PORT");
     }
 
     #[test]
