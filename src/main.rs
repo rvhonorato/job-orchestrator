@@ -87,7 +87,7 @@ async fn start_server(config: Config) -> anyhow::Result<()> {
     let app = create_routes(pool.clone(), config.clone());
 
     // Initialize socket
-    let addr = SocketAddr::from(([0, 0, 0, 0], 5000));
+    let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     tracing::info!("listening on {}", addr);
 
     let listener = TcpListener::bind(addr).await?;
@@ -117,7 +117,7 @@ async fn start_client(config: Config) -> anyhow::Result<()> {
     let client_app = create_client_routes(pool.clone(), config.clone());
 
     // Initialize socket
-    let addr = SocketAddr::from(([0, 0, 0, 0], 9000));
+    let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     tracing::info!("Client listening on {}", addr);
 
     let listener = TcpListener::bind(addr).await?;

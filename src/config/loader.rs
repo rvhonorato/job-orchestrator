@@ -11,6 +11,7 @@ pub struct Config {
     pub db_path: String,
     pub data_path: String,
     pub max_age: Duration,
+    pub port: u16,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -90,12 +91,23 @@ impl Config {
             }
         };
 
+        let port = match env::var("PORT") {
+            Ok(v) => v.parse::<u16>().unwrap(),
+            Err(_) => {
+                let port: u16 = 5000;
+                warn!("PORT not defined, using {:?}", port);
+                port
+            }
+        };
+
         let config = Config {
             services,
             db_path,
             data_path,
             max_age,
+            port,
         };
+
         info!("{:?}", config);
         Ok(config)
     }
@@ -137,6 +149,7 @@ mod tests {
             db_path: "/test/db.sqlite".to_string(),
             data_path: "/test/data".to_string(),
             max_age: Duration::from_secs(3600),
+            port: 1111,
         }
     }
 
@@ -250,6 +263,7 @@ mod tests {
             db_path: "/test/db.sqlite".to_string(),
             data_path: "/test/data".to_string(),
             max_age: Duration::from_secs(7200),
+            port: 1111,
         };
 
         assert_eq!(config.services.len(), 2);
