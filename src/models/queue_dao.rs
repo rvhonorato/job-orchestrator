@@ -44,6 +44,7 @@ mod tests {
             db_path: "/test/db.sqlite".to_string(),
             data_path: "/test/data".to_string(),
             max_age: Duration::from_secs(3600),
+            port: 1111,
         }
     }
 

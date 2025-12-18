@@ -160,6 +160,7 @@ mod test {
             data_path: "".to_string(),
             db_path: "".to_string(),
             max_age: Duration::from_secs(1),
+            port: 1111,
         };
         let target = OkMockDestination;
 
@@ -193,6 +194,7 @@ mod test {
             data_path: "".to_string(),
             db_path: "".to_string(),
             max_age: Duration::from_secs(1),
+            port: 1111,
         };
 
         let target = ErrMockDestination;
@@ -223,6 +225,7 @@ mod test {
             data_path: "".to_string(),
             db_path: "".to_string(),
             max_age: Duration::from_secs(1),
+            port: 1111,
         };
         let target = OkMockDestination;
 
@@ -253,6 +256,7 @@ mod test {
             data_path: "".to_string(),
             db_path: "".to_string(),
             max_age: Duration::from_secs(1),
+            port: 1111,
         };
         let target = ErrMockDestination;
 
@@ -280,6 +284,7 @@ mod test {
             data_path: "".to_string(),
             db_path: "".to_string(),
             max_age: Duration::from_secs(1),
+            port: 1111,
         };
         let target = ErrMockDestination;
 

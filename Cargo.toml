@@ -1,6 +1,6 @@
 [package]
 name = "job-orchestrator"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 description = "Asynchronous job orchestrator for managing and routing payloads between services and computing resources with quota tracking"
 authors = ["Rodrigo V. Honorato <rvhonorato@protonmail.com>"]
