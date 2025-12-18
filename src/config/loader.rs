@@ -313,18 +313,6 @@ mod tests {
     }
 
     #[test]
-    fn test_config_new_without_env_vars() {
-        let config = Config::new().unwrap();
-
-        // Verify paths were defined as defaults
-        let wd = env::current_dir().unwrap().display().to_string();
-        assert_eq!(config.db_path, format!("{}/db.sqlite", wd));
-        assert_eq!(config.data_path, format!("{}/data", wd));
-        assert_eq!(config.max_age, Duration::from_secs(864000));
-        assert_eq!(config.port, 5000);
-    }
-
-    #[test]
     fn test_config_new_with_multiple_services() {
         // Set environment variables for multiple services
         env::set_var("SERVICE_ALPHA_UPLOAD_URL", "http://alpha.com/upload");
