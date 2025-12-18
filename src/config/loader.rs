@@ -313,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn test_config_new_without_nonservice_env_vars() {
+    fn test_config_new_without_env_vars() {
         let config = Config::new().unwrap();
 
         // Verify paths were defined as defaults
