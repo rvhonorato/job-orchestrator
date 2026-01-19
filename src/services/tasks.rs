@@ -406,6 +406,55 @@ mod test {
         assert_eq!(_payload.status, Status::Completed);
     }
 
+    /// When run.sh is missing, the job should be marked as Invalid (user error).
+    #[tokio::test]
+    async fn test_runner_no_script_sets_invalid() {
+        // Initialize pool
+        let pool = crate::datasource::db::init_payload_db().await;
+        // Initialize config with tempdir
+        let mut config = Config::new().unwrap();
+        let tempdir = TempDir::new().unwrap();
+        config.data_path = tempdir.path().to_str().unwrap().to_string();
+
+        // Add a payload WITHOUT a run.sh script
+        let mut payload = Payload::new();
+        payload
+            .add_to_db(&pool)
+            .await
+            .expect("Failed to add payload to DB");
+
+        // Add some other file, but NOT run.sh
+        payload.add_input("data.txt".to_string(), b"some data".to_vec());
+
+        // Prepare the payload
+        payload
+            .prepare(&config.data_path)
+            .expect("Failed to prepare payload");
+
+        // Update loc in database after prepare
+        payload
+            .update_loc(&pool)
+            .await
+            .expect("Failed to update payload loc");
+
+        // Mark as prepared
+        payload
+            .update_status(Status::Prepared, &pool)
+            .await
+            .expect("Failed to update payload status");
+
+        // Run the runner with the same config
+        runner(pool.clone(), config).await;
+
+        // Check the effects
+        let _payload = Payload::retrieve_id(payload.id, &pool)
+            .await
+            .expect("Failed to retrieve payload");
+
+        // No run.sh = user error = Invalid status
+        assert_eq!(_payload.status, Status::Invalid);
+    }
+
     /// When a service returns HTTP 204, getter() should set the job status to Failed.
     #[tokio::test]
     async fn test_getter_job_failed_or_cleaned_sets_status_to_failed() {
