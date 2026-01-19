@@ -406,7 +406,7 @@ mod test {
         assert_eq!(_payload.status, Status::Completed);
     }
 
-    /// when a service returns http 204 (job failed), getter() should set the job status to failed
+    /// When a service returns HTTP 204, getter() should set the job status to Failed.
     #[tokio::test]
     async fn test_getter_job_failed_or_cleaned_sets_status_to_failed() {
         // Set up mock server that returns 204 (job failed)
@@ -454,13 +454,6 @@ mod test {
         let mut updated_job = Job::new("");
         updated_job.retrieve_id(job_id, &pool).await.unwrap();
 
-        // BUG: Currently this is Unknown, but it should be Failed
-        // Once the bug is fixed, change this assertion to Status::Failed
-        assert_eq!(
-            updated_job.status,
-            Status::Failed,
-            "Job status should be Failed when service returns 204, but got {:?}",
-            updated_job.status
-        );
+        assert_eq!(updated_job.status, Status::Failed);
     }
 }
