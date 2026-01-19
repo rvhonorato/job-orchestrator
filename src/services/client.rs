@@ -467,6 +467,56 @@ mod test {
     }
 
     #[tokio::test]
+    async fn test_client_download_bad_request() {
+        let mut server = Server::new_async().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mut job = Job::new(temp_dir.path().to_str().unwrap());
+        job.dest_id = 321;
+        fs::create_dir_all(&job.loc).unwrap();
+
+        // Mock server response with BAD_REQUEST status (job invalid - user error)
+        let mock = server
+            .mock("GET", "/retrieve/321")
+            .with_status(400)
+            .create_async()
+            .await;
+
+        let client = Client;
+        let url = format!("{}/retrieve", server.url());
+        let result = client.download(&job, &url).await;
+
+        mock.assert_async().await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(DownloadError::JobInvalid)));
+    }
+
+    #[tokio::test]
+    async fn test_client_download_gone() {
+        let mut server = Server::new_async().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mut job = Job::new(temp_dir.path().to_str().unwrap());
+        job.dest_id = 654;
+        fs::create_dir_all(&job.loc).unwrap();
+
+        // Mock server response with GONE status (job failed during execution)
+        let mock = server
+            .mock("GET", "/retrieve/654")
+            .with_status(410)
+            .create_async()
+            .await;
+
+        let client = Client;
+        let url = format!("{}/retrieve", server.url());
+        let result = client.download(&job, &url).await;
+
+        mock.assert_async().await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(DownloadError::JobFailed)));
+    }
+
+    #[tokio::test]
     async fn test_client_download_not_found() {
         let mut server = Server::new_async().await;
         let temp_dir = tempfile::tempdir().unwrap();
