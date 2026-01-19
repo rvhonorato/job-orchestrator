@@ -20,6 +20,7 @@ use utoipa;
         (status = 200, description = "Job completed, downloading results", body = Vec<u8>),
         (status = 202, description = "Job still processing"),
         (status = 204, description = "Job results cleaned up (expired)"),
+        (status = 400, description = "Job invalid (user error)"),
         (status = 404, description = "Job not found"),
         (status = 410, description = "Job failed"),
         (status = 500, description = "Internal server error or unknown state")
@@ -43,8 +44,13 @@ pub async fn download(
         Status::Completed => Ok(job.download()),
         Status::Cleaned => Err(StatusCode::NO_CONTENT),
         Status::Failed => Err(StatusCode::GONE),
+        Status::Invalid => Err(StatusCode::BAD_REQUEST),
         Status::Unknown => Err(StatusCode::INTERNAL_SERVER_ERROR),
-        _ => Err(StatusCode::ACCEPTED),
+        Status::Pending
+        | Status::Processing
+        | Status::Queued
+        | Status::Submitted
+        | Status::Prepared => Err(StatusCode::ACCEPTED),
     }
 }
 
@@ -447,6 +453,29 @@ mod tests {
                 e,
                 StatusCode::NO_CONTENT,
                 "Cleaned jobs should return 204 NO_CONTENT (results expired)"
+            ),
+        }
+    }
+
+    /// Invalid jobs should return 400 BAD_REQUEST to indicate a user error (e.g., missing run.sh).
+    #[tokio::test]
+    async fn test_download_invalid_job_returns_bad_request() {
+        let config = Config::new().unwrap();
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        let mut job = Job::new("");
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Invalid, &pool).await.unwrap();
+
+        let state = State(AppState { pool, config });
+        let path = Path(job.id);
+
+        match download(state, path).await {
+            Ok(_) => panic!("Expected error for invalid job"),
+            Err(e) => assert_eq!(
+                e,
+                StatusCode::BAD_REQUEST,
+                "Invalid jobs should return 400 BAD_REQUEST (user error)"
             ),
         }
     }

@@ -618,4 +618,56 @@ mod test {
 
         assert_eq!(updated_job.status, Status::Failed);
     }
+
+    /// When a service returns HTTP 400 BAD_REQUEST, getter() should set the job status to Invalid.
+    /// This indicates a user error (e.g., missing run.sh).
+    #[tokio::test]
+    async fn test_getter_job_invalid_sets_status_to_invalid() {
+        // Set up mock server that returns 400 (job invalid - user error)
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/download/321")
+            .with_status(400)
+            .create_async()
+            .await;
+
+        // Set up database
+        let pool = SqlitePool::connect(":memory:")
+            .await
+            .unwrap_or_else(|e| panic!("Database connection failed: {e}"));
+        create_jobs_table(&pool).await.unwrap();
+
+        // Set up config with service pointing to mock server
+        let mut config = Config::new().unwrap();
+        config.services.insert(
+            "test-service".to_string(),
+            Service {
+                name: "test-service".to_string(),
+                upload_url: format!("{}/upload", server.url()),
+                download_url: format!("{}/download", server.url()),
+                runs_per_user: 5,
+            },
+        );
+
+        // Create a job in Submitted status
+        let tempdir = TempDir::new().unwrap();
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_service("test-service".to_string());
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Submitted, &pool).await.unwrap();
+        job.update_dest_id(321, &pool).await.unwrap();
+        let job_id = job.id;
+
+        // Run getter - this will call the mock server which returns 400
+        getter(pool.clone(), config).await;
+
+        // Verify the mock was called
+        mock.assert_async().await;
+
+        // Retrieve the job and check status
+        let mut updated_job = Job::new("");
+        updated_job.retrieve_id(job_id, &pool).await.unwrap();
+
+        assert_eq!(updated_job.status, Status::Invalid);
+    }
 }
