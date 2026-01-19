@@ -40,9 +40,8 @@ pub async fn download(
 
     match job.status {
         Status::Completed => Ok(job.download()),
-        Status::Failed => Err(StatusCode::NO_CONTENT),
+        Status::Failed | Status::Unknown => Err(StatusCode::NO_CONTENT),
         Status::Cleaned => Err(StatusCode::NO_CONTENT),
-        // TODO: Handle other status here
         _ => Err(StatusCode::ACCEPTED),
     }
 }
@@ -757,6 +756,30 @@ mod tests {
         match download(state, path).await {
             Ok(_) => panic!("Expected error"),
             Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
+        }
+    }
+
+    /// Defense in depth: Unknown status should return 204 (NO_CONTENT) like Failed,
+    /// not 202 (ACCEPTED) which signals the job is still running.
+    #[tokio::test]
+    async fn test_download_unknown_job_returns_no_content() {
+        let config = Config::new().unwrap();
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        let mut job = Job::new("");
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Unknown, &pool).await.unwrap();
+
+        let state = State(AppState { pool, config });
+        let path = Path(job.id);
+
+        match download(state, path).await {
+            Ok(_) => panic!("Expected error"),
+            Err(e) => assert_eq!(
+                e,
+                StatusCode::NO_CONTENT,
+                "Unknown status should return 204 NO_CONTENT, not 202 ACCEPTED"
+            ),
         }
     }
 }
