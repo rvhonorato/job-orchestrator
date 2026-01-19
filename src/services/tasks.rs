@@ -134,6 +134,10 @@ pub async fn getter(pool: SqlitePool, config: Config) {
                         warn!("Job {} not found on server", j.id);
                         j.update_status(Status::Unknown, &pool).await.ok();
                     }
+                    Err(DownloadError::JobFailedOrCleaned) => {
+                        warn!("Job {} failed or was cleaned", j.id);
+                        j.update_status(Status::Failed, &pool).await.ok();
+                    }
                     Err(e) => {
                         error!("Failed to download job {}: {:?}", j.id, e);
                         j.update_status(Status::Unknown, &pool).await.ok();
@@ -162,12 +166,16 @@ pub async fn runner(pool: SqlitePool, config: Config) {
                         Ok(_) => {
                             j.update_status(Status::Completed, &pool_clone).await.ok();
                         }
-                        // TODO: Add specific error handler for each case
-                        Err(
-                            ClientError::Execution
-                            | ClientError::Script
-                            | ClientError::NoExecScript,
-                        ) => {
+                        Err(ClientError::Script) => {
+                            // Script ran but exited non-zero - job completed (user can check results)
+                            j.update_status(Status::Completed, &pool_clone).await.ok();
+                        }
+                        Err(ClientError::NoExecScript) => {
+                            // User error - no run.sh script provided
+                            j.update_status(Status::Invalid, &pool_clone).await.ok();
+                        }
+                        Err(ClientError::Execution) => {
+                            // System error - couldn't execute the script
                             j.update_status(Status::Failed, &pool_clone).await.ok();
                         }
                     }
@@ -186,6 +194,7 @@ mod test {
     use crate::config::loader::{Config, Service};
     use crate::models::payload_dao::Payload;
     use crate::models::{job_dao::Job, job_dto::create_jobs_table};
+    use mockito::Server;
     use std::{path::Path, time::Duration};
     use tempfile::TempDir;
     use tokio::time::sleep;
@@ -347,8 +356,10 @@ mod test {
         assert!(expected_output.exists());
     }
 
+    /// When a script exits with non-zero code, the job is still "completed" -
+    /// it ran successfully but had a logical failure (e.g., bad user input).
     #[tokio::test]
-    async fn test_runner_failure() {
+    async fn test_runner_script_nonzero_exit_is_completed() {
         // Initialize pool
         let pool = crate::datasource::db::init_payload_db().await;
         // Initialize config
@@ -361,7 +372,7 @@ mod test {
             .await
             .expect("Failed to add payload to DB");
 
-        // Add input data
+        // Add input data - script exits with non-zero code
         let data = b"#!/bin/bash\nexit 1\n";
         payload.add_input("run.sh".to_string(), data.to_vec());
 
@@ -391,6 +402,107 @@ mod test {
             .await
             .expect("Failed to retrieve payload");
 
-        assert_eq!(_payload.status, Status::Failed);
+        // Script ran and exited - job is completed (not failed)
+        assert_eq!(_payload.status, Status::Completed);
+    }
+
+    /// When run.sh is missing, the job should be marked as Invalid (user error).
+    #[tokio::test]
+    async fn test_runner_no_script_sets_invalid() {
+        // Initialize pool
+        let pool = crate::datasource::db::init_payload_db().await;
+        // Initialize config with tempdir
+        let mut config = Config::new().unwrap();
+        let tempdir = TempDir::new().unwrap();
+        config.data_path = tempdir.path().to_str().unwrap().to_string();
+
+        // Add a payload WITHOUT a run.sh script
+        let mut payload = Payload::new();
+        payload
+            .add_to_db(&pool)
+            .await
+            .expect("Failed to add payload to DB");
+
+        // Add some other file, but NOT run.sh
+        payload.add_input("data.txt".to_string(), b"some data".to_vec());
+
+        // Prepare the payload
+        payload
+            .prepare(&config.data_path)
+            .expect("Failed to prepare payload");
+
+        // Update loc in database after prepare
+        payload
+            .update_loc(&pool)
+            .await
+            .expect("Failed to update payload loc");
+
+        // Mark as prepared
+        payload
+            .update_status(Status::Prepared, &pool)
+            .await
+            .expect("Failed to update payload status");
+
+        // Run the runner with the same config
+        runner(pool.clone(), config).await;
+
+        // Check the effects
+        let _payload = Payload::retrieve_id(payload.id, &pool)
+            .await
+            .expect("Failed to retrieve payload");
+
+        // No run.sh = user error = Invalid status
+        assert_eq!(_payload.status, Status::Invalid);
+    }
+
+    /// When a service returns HTTP 204, getter() should set the job status to Failed.
+    #[tokio::test]
+    async fn test_getter_job_failed_or_cleaned_sets_status_to_failed() {
+        // Set up mock server that returns 204 (job failed)
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/download/123")
+            .with_status(204)
+            .create_async()
+            .await;
+
+        // Set up database
+        let pool = SqlitePool::connect(":memory:")
+            .await
+            .unwrap_or_else(|e| panic!("Database connection failed: {e}"));
+        create_jobs_table(&pool).await.unwrap();
+
+        // Set up config with service pointing to mock server
+        let mut config = Config::new().unwrap();
+        config.services.insert(
+            "test-service".to_string(),
+            Service {
+                name: "test-service".to_string(),
+                upload_url: format!("{}/upload", server.url()),
+                download_url: format!("{}/download", server.url()),
+                runs_per_user: 5,
+            },
+        );
+
+        // Create a job in Submitted status
+        let tempdir = TempDir::new().unwrap();
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_service("test-service".to_string());
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Submitted, &pool).await.unwrap();
+        job.update_dest_id(123, &pool).await.unwrap();
+        let job_id = job.id;
+
+        // Run getter - this will call the mock server which returns 204
+        getter(pool.clone(), config).await;
+
+        // Verify the mock was called
+        mock.assert_async().await;
+
+        // Retrieve the job and check status
+        let mut updated_job = Job::new("");
+        updated_job.retrieve_id(job_id, &pool).await.unwrap();
+
+        assert_eq!(updated_job.status, Status::Failed);
     }
 }

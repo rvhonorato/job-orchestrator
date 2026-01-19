@@ -8,6 +8,7 @@ pub enum Status {
     Processing,
     Completed,
     Failed,
+    Invalid,
     Queued,
     Submitted,
     Unknown,
@@ -23,6 +24,7 @@ impl fmt::Display for Status {
             Status::Processing => write!(f, "processing"),
             Status::Completed => write!(f, "completed"),
             Status::Failed => write!(f, "failed"),
+            Status::Invalid => write!(f, "invalid"),
             Status::Queued => write!(f, "queued"),
             Status::Submitted => write!(f, "submitted"),
             Status::Unknown => write!(f, "unknown"),
@@ -38,6 +40,7 @@ impl Status {
             "processing" => Status::Processing,
             "completed" => Status::Completed,
             "failed" => Status::Failed,
+            "invalid" => Status::Invalid,
             "queued" => Status::Queued,
             "submitted" => Status::Submitted,
             "cleaned" => Status::Cleaned,
@@ -78,6 +81,11 @@ mod tests {
     }
 
     #[test]
+    fn test_display_invalid() {
+        assert_eq!(format!("{}", Status::Invalid), "invalid");
+    }
+
+    #[test]
     fn test_display_queued() {
         assert_eq!(format!("{}", Status::Queued), "queued");
     }
@@ -105,6 +113,7 @@ mod tests {
         assert_eq!(Status::from_string("processing"), Status::Processing);
         assert_eq!(Status::from_string("completed"), Status::Completed);
         assert_eq!(Status::from_string("failed"), Status::Failed);
+        assert_eq!(Status::from_string("invalid"), Status::Invalid);
         assert_eq!(Status::from_string("queued"), Status::Queued);
         assert_eq!(Status::from_string("submitted"), Status::Submitted);
         assert_eq!(Status::from_string("cleaned"), Status::Cleaned);
@@ -116,6 +125,7 @@ mod tests {
         assert_eq!(Status::from_string("PROCESSING"), Status::Processing);
         assert_eq!(Status::from_string("COMPLETED"), Status::Completed);
         assert_eq!(Status::from_string("FAILED"), Status::Failed);
+        assert_eq!(Status::from_string("INVALID"), Status::Invalid);
         assert_eq!(Status::from_string("QUEUED"), Status::Queued);
         assert_eq!(Status::from_string("SUBMITTED"), Status::Submitted);
         assert_eq!(Status::from_string("CLEANED"), Status::Cleaned);
@@ -129,8 +139,8 @@ mod tests {
     }
 
     #[test]
-    fn test_from_string_invalid() {
-        assert_eq!(Status::from_string("invalid"), Status::Unknown);
+    fn test_from_string_unrecognized() {
+        assert_eq!(Status::from_string("notastatus"), Status::Unknown);
         assert_eq!(Status::from_string("random"), Status::Unknown);
         assert_eq!(Status::from_string("xyz"), Status::Unknown);
     }
@@ -180,6 +190,10 @@ mod tests {
         assert_eq!(
             Status::from_string(&format!("{}", Status::Failed)),
             Status::Failed
+        );
+        assert_eq!(
+            Status::from_string(&format!("{}", Status::Invalid)),
+            Status::Invalid
         );
         assert_eq!(
             Status::from_string(&format!("{}", Status::Queued)),

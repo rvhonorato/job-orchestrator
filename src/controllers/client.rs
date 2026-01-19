@@ -100,9 +100,9 @@ pub async fn retrieve(
                 Err(StatusCode::INTERNAL_SERVER_ERROR)
             }
         },
-        Status::Failed => Err(StatusCode::NO_CONTENT),
+        Status::Invalid => Err(StatusCode::BAD_REQUEST),
+        Status::Failed => Err(StatusCode::INTERNAL_SERVER_ERROR),
         Status::Cleaned => Err(StatusCode::NO_CONTENT),
-        // TODO: Handle other status here
         _ => Err(StatusCode::ACCEPTED),
     }
 }
@@ -348,7 +348,7 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn test_retrieve_nocontent() {
+    async fn test_retrieve_failed_returns_internal_server_error() {
         let (test_app, _, failed_jobid, _tempdir) =
             setup_retrieve_test_router("/retrieve/{id}").await;
         let endpoint = format!("/retrieve/{}", failed_jobid);
@@ -359,9 +359,56 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
+        // Failed status (system error) returns 500 Internal Server Error
         assert_eq!(
             test_app.oneshot(req).await.unwrap().status(),
-            StatusCode::NO_CONTENT
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_invalid_returns_bad_request() {
+        // Setup
+        let data_dir = tempdir().unwrap();
+        let mut config = Config::new().unwrap();
+        config.data_path = data_dir.path().to_str().unwrap().to_string();
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        let state = AppState {
+            pool: pool.clone(),
+            config: config.clone(),
+        };
+
+        // Create an invalid payload (user error - e.g., missing run.sh)
+        let mut payload = Payload::new();
+        payload.set_id(1);
+        payload
+            .prepare(&config.data_path)
+            .expect("Failed to prepare payload");
+        payload
+            .add_to_db(&pool)
+            .await
+            .expect("Failed to add payload to DB");
+        payload
+            .update_status(Status::Invalid, &pool)
+            .await
+            .expect("Failed to update status");
+
+        let test_app = Router::new()
+            .route("/retrieve/{id}", get(retrieve))
+            .with_state(state);
+
+        let endpoint = format!("/retrieve/{}", payload.id);
+        let req = Request::builder()
+            .method("GET")
+            .uri(endpoint)
+            .body(Body::empty())
+            .unwrap();
+
+        // Invalid status (user error) returns 400 Bad Request
+        assert_eq!(
+            test_app.oneshot(req).await.unwrap().status(),
+            StatusCode::BAD_REQUEST
         );
     }
 
