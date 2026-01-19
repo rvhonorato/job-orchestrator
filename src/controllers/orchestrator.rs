@@ -17,11 +17,13 @@ use utoipa;
         ("id" = i32, Path, description = "Job identifier")
     ),
     responses(
-        (status = 200, description = "File downloaded successfully", body = Vec<u8>),
-        (status = 202, description = "Job not ready"),
-        (status = 204, description = "Job failed or cleaned"),
+        (status = 200, description = "Job completed, downloading results", body = Vec<u8>),
+        (status = 202, description = "Job still processing"),
+        (status = 204, description = "Job results cleaned up (expired)"),
+        (status = 400, description = "Job invalid (user error)"),
         (status = 404, description = "Job not found"),
-        (status = 500, description = "Internal server error")
+        (status = 410, description = "Job failed"),
+        (status = 500, description = "Internal server error or unknown state")
     ),
     tag = "files"
 )]
@@ -40,9 +42,15 @@ pub async fn download(
 
     match job.status {
         Status::Completed => Ok(job.download()),
-        Status::Failed | Status::Unknown => Err(StatusCode::NO_CONTENT),
         Status::Cleaned => Err(StatusCode::NO_CONTENT),
-        _ => Err(StatusCode::ACCEPTED),
+        Status::Failed => Err(StatusCode::GONE),
+        Status::Invalid => Err(StatusCode::BAD_REQUEST),
+        Status::Unknown => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Status::Pending
+        | Status::Processing
+        | Status::Queued
+        | Status::Submitted
+        | Status::Prepared => Err(StatusCode::ACCEPTED),
     }
 }
 
@@ -401,39 +409,74 @@ mod tests {
         }
     }
 
+    /// Failed jobs should return 410 GONE to indicate the resource permanently failed.
+    /// This distinguishes from Cleaned (204) which is a normal lifecycle state.
     #[tokio::test]
-    async fn test_download_failed_job() {
+    async fn test_download_failed_job_returns_gone() {
         let config = Config::new().unwrap();
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap(); // Mock database connection;
-        init_db(&pool).await.unwrap(); // Initialize the database schema
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
         let mut job = Job::new("");
-        job.add_to_db(&pool).await.unwrap(); // Add job to the database;
-        job.update_status(Status::Failed, &pool).await.unwrap(); // Update job status to Failed;
-                                                                 //
-        let state = State(AppState { pool, config }); // Mock state for testing
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Failed, &pool).await.unwrap();
+
+        let state = State(AppState { pool, config });
         let path = Path(job.id);
 
         match download(state, path).await {
-            Ok(_) => {}
-            Err(e) => assert_eq!(e, StatusCode::NO_CONTENT),
+            Ok(_) => panic!("Expected error for failed job"),
+            Err(e) => assert_eq!(
+                e,
+                StatusCode::GONE,
+                "Failed jobs should return 410 GONE, not 204 NO_CONTENT"
+            ),
         }
     }
 
+    /// Cleaned jobs should return 204 NO_CONTENT - this is a normal lifecycle state
+    /// where the job completed successfully but results have expired.
     #[tokio::test]
-    async fn test_download_cleaned_job() {
+    async fn test_download_cleaned_job_returns_no_content() {
         let config = Config::new().unwrap();
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap(); // Mock database connection;
-        init_db(&pool).await.unwrap(); // Initialize the database schema
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
         let mut job = Job::new("");
-        job.add_to_db(&pool).await.unwrap(); // Add job to the database;
-        job.update_status(Status::Cleaned, &pool).await.unwrap(); // Update job status to Cleaned;
-                                                                  //
-        let state = State(AppState { pool, config }); // Mock state for testing
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Cleaned, &pool).await.unwrap();
+
+        let state = State(AppState { pool, config });
         let path = Path(job.id);
 
         match download(state, path).await {
-            Ok(_) => {}
-            Err(e) => assert_eq!(e, StatusCode::NO_CONTENT),
+            Ok(_) => panic!("Expected error for cleaned job"),
+            Err(e) => assert_eq!(
+                e,
+                StatusCode::NO_CONTENT,
+                "Cleaned jobs should return 204 NO_CONTENT (results expired)"
+            ),
+        }
+    }
+
+    /// Invalid jobs should return 400 BAD_REQUEST to indicate a user error (e.g., missing run.sh).
+    #[tokio::test]
+    async fn test_download_invalid_job_returns_bad_request() {
+        let config = Config::new().unwrap();
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        let mut job = Job::new("");
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Invalid, &pool).await.unwrap();
+
+        let state = State(AppState { pool, config });
+        let path = Path(job.id);
+
+        match download(state, path).await {
+            Ok(_) => panic!("Expected error for invalid job"),
+            Err(e) => assert_eq!(
+                e,
+                StatusCode::BAD_REQUEST,
+                "Invalid jobs should return 400 BAD_REQUEST (user error)"
+            ),
         }
     }
 
@@ -759,10 +802,10 @@ mod tests {
         }
     }
 
-    /// Defense in depth: Unknown status should return 204 (NO_CONTENT) like Failed,
-    /// not 202 (ACCEPTED) which signals the job is still running.
+    /// Unknown status indicates an unexpected/indeterminate state and should return
+    /// 500 INTERNAL_SERVER_ERROR to signal something went wrong.
     #[tokio::test]
-    async fn test_download_unknown_job_returns_no_content() {
+    async fn test_download_unknown_job_returns_internal_error() {
         let config = Config::new().unwrap();
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         init_db(&pool).await.unwrap();
@@ -774,11 +817,11 @@ mod tests {
         let path = Path(job.id);
 
         match download(state, path).await {
-            Ok(_) => panic!("Expected error"),
+            Ok(_) => panic!("Expected error for unknown job"),
             Err(e) => assert_eq!(
                 e,
-                StatusCode::NO_CONTENT,
-                "Unknown status should return 204 NO_CONTENT, not 202 ACCEPTED"
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Unknown status should return 500 INTERNAL_SERVER_ERROR"
             ),
         }
     }
