@@ -152,8 +152,11 @@ impl Endpoint for Client {
                 Ok(())
             }
             StatusCode::ACCEPTED => Err(DownloadError::JobNotReady),
-            StatusCode::NO_CONTENT => Err(DownloadError::JobFailedOrCleaned),
+            StatusCode::NO_CONTENT => Err(DownloadError::JobCleaned),
+            StatusCode::BAD_REQUEST => Err(DownloadError::JobInvalid),
             StatusCode::NOT_FOUND => Err(DownloadError::JobNotFound),
+            StatusCode::GONE => Err(DownloadError::JobFailed),
+            StatusCode::INTERNAL_SERVER_ERROR => Err(DownloadError::JobFailed),
             _ => {
                 let body = response
                     .text()
@@ -447,7 +450,7 @@ mod test {
         job.dest_id = 789;
         fs::create_dir_all(&job.loc).unwrap();
 
-        // Mock server response with NO_CONTENT status
+        // Mock server response with NO_CONTENT status (job results cleaned/expired)
         let mock = server
             .mock("GET", "/retrieve/789")
             .with_status(204)
@@ -460,7 +463,7 @@ mod test {
 
         mock.assert_async().await;
         assert!(result.is_err());
-        assert!(matches!(result, Err(DownloadError::JobFailedOrCleaned)));
+        assert!(matches!(result, Err(DownloadError::JobCleaned)));
     }
 
     #[tokio::test]

@@ -30,39 +30,34 @@ pub enum UploadError {
 pub enum DownloadError {
     #[error("Request failed: {0}")]
     RequestFailed(#[from] reqwest::Error),
-
     #[error("Failed to read response: {0}")]
     ResponseReadFailed(reqwest::Error),
-
     #[error("Job not found")]
     JobNotFound,
-
     #[error("Job not ready yet")]
     JobNotReady,
-
-    #[error("Job failed or was cleaned")]
-    JobFailedOrCleaned,
-
+    #[error("Job failed during execution")]
+    JobFailed,
+    #[error("Job results cleaned up (expired)")]
+    JobCleaned,
+    #[error("Job invalid (user error)")]
+    JobInvalid,
     #[error("Server returned error status {status}: {body}")]
     UnexpectedStatus { status: StatusCode, body: String },
-
     #[error("Failed to create file '{path}': {source}")]
     FileCreate {
         path: String,
         #[source]
         source: tokio::io::Error,
     },
-
     #[error("Failed to write to file '{path}': {source}")]
     FileWrite {
         path: String,
         #[source]
         source: tokio::io::Error,
     },
-
     #[error("Not found")]
     NotFound,
-
     #[error("Invalid service")]
     InvalidService,
 }
