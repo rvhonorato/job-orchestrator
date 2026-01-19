@@ -170,8 +170,12 @@ pub async fn runner(pool: SqlitePool, config: Config) {
                             // Script ran but exited non-zero - job completed (user can check results)
                             j.update_status(Status::Completed, &pool_clone).await.ok();
                         }
-                        Err(ClientError::Execution | ClientError::NoExecScript) => {
-                            // System error - couldn't run the script at all
+                        Err(ClientError::NoExecScript) => {
+                            // User error - no run.sh script provided
+                            j.update_status(Status::Invalid, &pool_clone).await.ok();
+                        }
+                        Err(ClientError::Execution) => {
+                            // System error - couldn't execute the script
                             j.update_status(Status::Failed, &pool_clone).await.ok();
                         }
                     }
