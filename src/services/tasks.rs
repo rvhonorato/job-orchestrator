@@ -402,8 +402,7 @@ mod test {
         assert_eq!(_payload.status, Status::Completed);
     }
 
-    /// Test that demonstrates the bug: when a service returns HTTP 204 (job failed),
-    /// getter() should set the job status to Failed, but currently it sets it to Unknown.
+    /// when a service returns http 204 (job failed), getter() should set the job status to failed
     #[tokio::test]
     async fn test_getter_job_failed_or_cleaned_sets_status_to_failed() {
         // Set up mock server that returns 204 (job failed)
