@@ -103,8 +103,8 @@ async fn start_server(config: Config) -> anyhow::Result<()> {
 }
 
 async fn start_client(config: Config) -> anyhow::Result<()> {
-    // Initialize in-memory database
-    let pool = datasource::db::init_payload_db().await;
+    // Initialize database
+    let pool = datasource::db::init_payload_db(&config.db_path).await;
 
     // Create a scheduled job
     let runner_task = every(500).millisecond().perform(|| {

@@ -17,9 +17,9 @@ pub async fn init_db(db_path: &str) -> Pool<Sqlite> {
     pool
 }
 
-pub async fn init_payload_db() -> Pool<Sqlite> {
-    let connection_string = "sqlite::memory:".to_string();
-    info!("Using in-memory database");
+pub async fn init_payload_db(db_path: &str) -> Pool<Sqlite> {
+    let connection_string = format!("sqlite://{db_path}?mode=rwc");
+    info!("Using database: {}", connection_string);
     let pool = SqlitePool::connect(&connection_string)
         .await
         .unwrap_or_else(|e| panic!("Database connection failed: {e}"));
@@ -91,7 +91,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_init_payload_db_success() {
-        let pool = init_payload_db().await;
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("payload_test.db");
+        let db_path_str = db_path.to_str().unwrap();
+
+        let pool = init_payload_db(db_path_str).await;
 
         // Verify connection is valid
         assert!(!pool.is_closed());
@@ -106,8 +110,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_init_payload_db_in_memory() {
-        let pool = init_payload_db().await;
+    async fn test_init_payload_db_insert_and_query() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("payload_test.db");
+        let db_path_str = db_path.to_str().unwrap();
+
+        let pool = init_payload_db(db_path_str).await;
 
         // Insert a test record
         let insert_result = sqlx::query(
@@ -128,25 +136,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_init_payload_db_multiple_instances() {
-        // Each in-memory database should be independent
-        let pool1 = init_payload_db().await;
-        let pool2 = init_payload_db().await;
+    async fn test_init_payload_db_creates_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("payload_create.db");
+        let db_path_str = db_path.to_str().unwrap();
 
-        // Insert into pool1
-        sqlx::query("INSERT INTO payloads (id, status, loc) VALUES (1, 'Pending', '/test/path')")
-            .execute(&pool1)
-            .await
-            .unwrap();
+        assert!(!db_path.exists());
 
-        // pool2 should be empty
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM payloads")
-            .fetch_one(&pool2)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 0);
+        let pool = init_payload_db(db_path_str).await;
 
-        pool1.close().await;
-        pool2.close().await;
+        // Database file should be created
+        assert!(db_path.exists());
+
+        pool.close().await;
     }
 }
