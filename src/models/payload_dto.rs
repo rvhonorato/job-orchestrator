@@ -96,10 +96,13 @@ impl Payload {
 mod test {
 
     use super::*;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_add_to_db() {
-        let pool = crate::datasource::db::init_payload_db().await;
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
 
         let mut payload = Payload::new();
 
@@ -110,7 +113,9 @@ mod test {
 
     #[tokio::test]
     async fn test_update_status() {
-        let pool = crate::datasource::db::init_payload_db().await;
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
 
         let mut payload = Payload::new();
 
@@ -131,7 +136,9 @@ mod test {
 
     #[tokio::test]
     async fn test_retrieve_id() {
-        let pool = crate::datasource::db::init_payload_db().await;
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
 
         let mut payload = Payload::new();
 

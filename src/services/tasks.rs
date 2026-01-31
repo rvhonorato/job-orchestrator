@@ -314,10 +314,11 @@ mod test {
     #[tokio::test]
     async fn test_runner() {
         // Initialize pool
-        let pool = crate::datasource::db::init_payload_db().await;
+        let tempdir = TempDir::new().unwrap();
+        let db_path = tempdir.path().join("test.db");
+        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
         // Initialize config
         let mut config = Config::new().unwrap();
-        let tempdir = TempDir::new().unwrap();
         config.data_path = tempdir.path().to_str().unwrap().to_string();
 
         // Add a payload
@@ -369,7 +370,9 @@ mod test {
     #[tokio::test]
     async fn test_runner_script_nonzero_exit_is_completed() {
         // Initialize pool
-        let pool = crate::datasource::db::init_payload_db().await;
+        let tempdir = TempDir::new().unwrap();
+        let db_path = tempdir.path().join("test.db");
+        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
         // Initialize config
         let config = Config::new().unwrap();
 
@@ -418,10 +421,11 @@ mod test {
     #[tokio::test]
     async fn test_runner_no_script_sets_invalid() {
         // Initialize pool
-        let pool = crate::datasource::db::init_payload_db().await;
+        let tempdir = TempDir::new().unwrap();
+        let db_path = tempdir.path().join("test.db");
+        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
         // Initialize config with tempdir
         let mut config = Config::new().unwrap();
-        let tempdir = TempDir::new().unwrap();
         config.data_path = tempdir.path().to_str().unwrap().to_string();
 
         // Add a payload WITHOUT a run.sh script
