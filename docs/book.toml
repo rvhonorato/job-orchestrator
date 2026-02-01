@@ -1,0 +1,31 @@
+[book]
+title = "job-orchestrator"
+authors = ["Rodrigo V. Honorato"]
+description = "Documentation for job-orchestrator - an asynchronous job orchestration system"
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/rvhonorato/job-orchestrator"
+edit-url-template = "https://github.com/rvhonorato/job-orchestrator/edit/main/docs/{path}"
+site-url = "https://rvhonorato.me/job-orchestrator/"
+no-section-label = false
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.search]
+enable = true
+limit-results = 30
+teaser-word-count = 30
+boost-title = 2
+boost-hierarchy = 1
+boost-paragraph = 1
+expand = true
+heading-split-level = 3
