@@ -19,6 +19,8 @@ Cargo.lock
 
 # mdBook output
 docs/book/
+docs/mermaid.min.js
+docs/mermaid-init.js
 
 # Build artifacts
 /release/
