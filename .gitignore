@@ -17,6 +17,9 @@ Cargo.lock
 /doc/
 *.rustdoc
 
+# mdBook output
+docs/book/
+
 # Build artifacts
 /release/
 /dist/
