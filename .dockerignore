@@ -3,5 +3,9 @@ uploads
 dev
 orchestrator-wd-data
 *html
+example
+docs
+data
 .git
 .github
+docker-compose.yml
