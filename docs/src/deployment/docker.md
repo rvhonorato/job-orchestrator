@@ -70,64 +70,8 @@ volumes:
 
 ### Production Setup
 
-```yaml
-version: '3.8'
-
-services:
-  server:
-    image: ghcr.io/rvhonorato/job-orchestrator:latest
-    command: server
-    restart: unless-stopped
-    ports:
-      - "5000:5000"
-    environment:
-      PORT: 5000
-      DB_PATH: /opt/data/db.sqlite
-      DATA_PATH: /opt/data
-      MAX_AGE: 172800
-      SERVICE_EXAMPLE_UPLOAD_URL: http://client:9000/submit
-      SERVICE_EXAMPLE_DOWNLOAD_URL: http://client:9000/retrieve
-      SERVICE_EXAMPLE_RUNS_PER_USER: 5
-    volumes:
-      - server-data:/opt/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-        reservations:
-          memory: 256M
-
-  client:
-    image: ghcr.io/rvhonorato/job-orchestrator:latest
-    command: client
-    restart: unless-stopped
-    environment:
-      PORT: 9000
-    volumes:
-      - client-data:/opt/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    deploy:
-      resources:
-        limits:
-          cpus: '4'
-          memory: 8G
-        reservations:
-          cpus: '1'
-          memory: 1G
-
-volumes:
-  server-data:
-  client-data:
-```
+See [Production Deployment - Container Hardening](./production.md#container-hardening)
+for details on each security option.
 
 ## Multiple Clients
 

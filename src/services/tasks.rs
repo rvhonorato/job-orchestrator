@@ -182,6 +182,10 @@ pub async fn runner(pool: SqlitePool, config: Config) {
                             // User error - no run.sh script provided
                             j.update_status(Status::Invalid, &pool_clone).await.ok();
                         }
+                        Err(ClientError::UnsafeScript { .. }) => {
+                            // User error - script contains dangerous patterns
+                            j.update_status(Status::Invalid, &pool_clone).await.ok();
+                        }
                         Err(ClientError::Execution) => {
                             // System error - couldn't execute the script
                             j.update_status(Status::Failed, &pool_clone).await.ok();

@@ -35,11 +35,74 @@ This guide covers best practices for deploying job-orchestrator in production en
 
 ## Security
 
+### Script Validation
+
+The client includes a built-in script validator that rejects `run.sh`
+scripts containing obviously dangerous patterns before execution. This
+covers destructive commands (`rm -rf /`, `mkfs`), network exfiltration
+tools (`curl`, `wget`, `socat`), reverse shells (`/dev/tcp/`), privilege
+escalation (`sudo`, `chmod +s`), container escapes (`nsenter`, `docker`),
+obfuscated execution (`base64 | bash`, `python -c`), persistence
+mechanisms (`crontab`, `systemctl`), crypto miners, and environment
+secret access.
+
+**This is a sanity check, not a sandbox.** It can be bypassed by
+determined actors. Input scripts are still expected to come from trusted
+or semi-trusted sources. True isolation must be enforced at the
+deployment level using the container hardening measures below.
+
+### Container Hardening
+
+The client executes user-submitted scripts with the full privileges of
+the process. Apply all of the following to limit blast radius:
+
+| Measure | Docker Compose | Purpose |
+|---------|---------------|---------|
+| Read-only rootfs | `read_only: true` | Prevent filesystem tampering |
+| Drop all capabilities | `cap_drop: [ALL]` | Remove kernel-level privileges |
+| No new privileges | `security_opt: [no-new-privileges:true]` | Block `setuid`/`setgid` escalation |
+| CPU limit | `deploy.resources.limits.cpus` | Prevent CPU starvation |
+| Memory limit | `deploy.resources.limits.memory` | Prevent OOM on host |
+| PIDs limit | `deploy.resources.limits.pids` | Prevent fork bombs |
+| Internal network | `networks: [internal]` | Block outbound internet access |
+| Writable tmpfs | `tmpfs: [/tmp]` | Provide scratch space on read-only rootfs |
+
+Example (applied to the client service):
+
+```yaml
+services:
+  client:
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+          pids: 256
+    networks:
+      - internal
+
+networks:
+  internal:
+    internal: true
+```
+
+**Future improvement:** Run the container as a non-root user (`USER appuser`
+in the Dockerfile). This requires migrating ownership of existing volumes
+first -- see the TODO in the Dockerfile.
+
 ### Network Security
 
 1. **Never expose clients to the internet**
-   - Clients execute arbitrary code
+   - Clients execute user-submitted scripts
    - Use internal networks only
+   - Block all outbound access from client containers
 
 2. **Use a reverse proxy**
    - TLS termination

@@ -76,6 +76,35 @@ cd job-orchestrator
 cargo build --release
 ```
 
+## Security
+
+The client component executes user-submitted `run.sh` scripts
+with the full privileges of the process. No filesystem isolation
+(chroot, namespaces, etc.) is enforced — the script has the same
+access as the client process itself. Input filenames are sanitized,
+and a built-in script validator rejects scripts containing
+obviously dangerous patterns (destructive commands, network
+exfiltration tools, reverse shells, privilege escalation, etc.).
+
+**Important**: The script validator is a sanity check, not a
+sandbox. It can be bypassed by determined actors. Input scripts
+are still expected to come from trusted or semi-trusted sources.
+True isolation must be enforced at the deployment level.
+
+**Recommended hardening when deploying:**
+
+- Run the client inside a container with resource limits
+  (CPU, memory, PIDs)
+- Use a read-only root filesystem (`--read-only`)
+- Drop all capabilities (`--cap-drop=ALL`)
+- Place the client on an internal network with no direct
+  external exposure
+- Block outbound network access from the client container
+  (e.g., `--network=internal` or firewall rules)
+- Do not run the container as root
+- Mount the job data directory with `noexec` where possible
+- Set a per-job timeout to prevent resource exhaustion
+
 ## Contributing
 
 Contributions, bug reports, and feature requests are
