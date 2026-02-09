@@ -36,10 +36,16 @@ COPY --from=build /opt/target/release/job-orchestrator /job-orchestrator
 
 #===============================================================================
 # Layer that will be running the job-orchestrator as `client`
-FROM server AS client
+#  it needs to execute in a layer that has `BASH`
+FROM alpine:latest AS client
+
+RUN apk add --no-cache bash
+
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=build /opt/target/release/job-orchestrator /job-orchestrator
 
 # Make sure the example application exists in the `client` layer
-COPY --from=application /opt/gdock/target/release/gdock /gdock
+COPY --from=application /opt/gdock/target/release/gdock /bin/gdock
 
 #===============================================================================
 FROM server AS default
