@@ -11,7 +11,6 @@ target/
 Cargo.lock
 **/*.rs.bk
 **/*.rs.bk.*
-*.pdb
 
 # Rust documentation
 /doc/
