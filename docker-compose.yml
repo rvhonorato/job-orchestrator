@@ -34,11 +34,14 @@ services:
       target: client
     command: /job-orchestrator client
     volumes:
+      - client-data:/opt/data
       - orchestrator-tmp:/tmp
     depends_on:
       - server
     environment:
       PORT: 9000
+      DATA_PATH: /opt/data
+      DB_PATH: /opt/data/db.sqlite
     networks:
       - api
 
@@ -50,4 +53,5 @@ networks:
 
 volumes:
   orchestrator-data:
+  client-data:
   orchestrator-tmp:
