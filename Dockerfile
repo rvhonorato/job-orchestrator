@@ -37,7 +37,7 @@ COPY --from=build /opt/target/release/job-orchestrator /job-orchestrator
 #===============================================================================
 # Layer that will be running the job-orchestrator as `client`
 #  it needs to execute in a layer that has `BASH`
-FROM alpine:latest AS client
+FROM alpine:3.23.3 AS client
 
 RUN apk add --no-cache bash
 
