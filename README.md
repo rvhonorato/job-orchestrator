@@ -32,6 +32,8 @@ docker compose up --build
 # Submit a job
 curl -X POST http://localhost:5000/upload \
   -F "file=@example/run.sh" \
+  -F "file=@example/2oob_A.pdb" \
+  -F "file=@example/2oob_B.pdb" \
   -F "user_id=1" \
   -F "service=example"
 
@@ -50,7 +52,7 @@ curl -o results.zip http://localhost:5000/download/1
 - [API Reference](https://rvhonorato.me/job-orchestrator/api/server-endpoints.html)
 - [Deployment](https://rvhonorato.me/job-orchestrator/deployment/docker.html)
 
-**API Documentation**: Available via Swagger UI at `http://localhost:5000/swagger-ui/` when running.
+**API Documentation**: Available via Swagger UI at `http://localhost:5000/swagger/` when running.
 
 ## Installation
 
