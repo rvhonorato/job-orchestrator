@@ -1,9 +1,10 @@
 services:
   server:
     container_name: server
+    image: job-orchestrator
     build:
       dockerfile: Dockerfile
-      target: prod
+      target: server
     command: /job-orchestrator server
     environment:
       # Location inside the container where the data will be saved
@@ -21,6 +22,7 @@ services:
       - "5000:5000"
     volumes:
       - orchestrator-data:/opt/data
+      - orchestrator-tmp:/tmp
     networks:
       - api
       - public
@@ -29,10 +31,14 @@ services:
     container_name: client
     build:
       dockerfile: Dockerfile
-      target: example
+      target: client
     command: /job-orchestrator client
-    ports:
-      - "9000:9000"
+    volumes:
+      - orchestrator-tmp:/tmp
+    depends_on:
+      - server
+    environment:
+      PORT: 9000
     networks:
       - api
 
@@ -44,3 +50,4 @@ networks:
 
 volumes:
   orchestrator-data:
+  orchestrator-tmp:
