@@ -3,3 +3,5 @@ uploads
 dev
 orchestrator-wd-data
 *html
+.git
+.github
