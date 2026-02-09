@@ -5,6 +5,11 @@ services:
     build:
       dockerfile: Dockerfile
       target: server
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     command: /job-orchestrator server
     environment:
       # Location inside the container where the data will be saved
@@ -22,7 +27,8 @@ services:
       - "5000:5000"
     volumes:
       - orchestrator-data:/opt/data
-      - orchestrator-tmp:/tmp
+    tmpfs:
+      - /tmp
     networks:
       - api
       - public
@@ -32,16 +38,28 @@ services:
     build:
       dockerfile: Dockerfile
       target: client
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     command: /job-orchestrator client
     volumes:
       - client-data:/opt/data
-      - orchestrator-tmp:/tmp
+    tmpfs:
+      - /tmp
     depends_on:
       - server
     environment:
       PORT: 9000
       DATA_PATH: /opt/data
       DB_PATH: /opt/data/db.sqlite
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+          pids: 256
     networks:
       - api
 
@@ -54,4 +72,3 @@ networks:
 volumes:
   orchestrator-data:
   client-data:
-  orchestrator-tmp:
