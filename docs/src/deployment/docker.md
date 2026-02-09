@@ -70,6 +70,9 @@ volumes:
 
 ### Production Setup
 
+See [Production Deployment - Container Hardening](./production.md#container-hardening)
+for details on each security option.
+
 ```yaml
 version: '3.8'
 
@@ -78,6 +81,11 @@ services:
     image: ghcr.io/rvhonorato/job-orchestrator:latest
     command: server
     restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "5000:5000"
     environment:
@@ -90,6 +98,8 @@ services:
       SERVICE_EXAMPLE_RUNS_PER_USER: 5
     volumes:
       - server-data:/opt/data
+    tmpfs:
+      - /tmp
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
@@ -101,15 +111,25 @@ services:
           memory: 1G
         reservations:
           memory: 256M
+    networks:
+      - api
+      - public
 
   client:
     image: ghcr.io/rvhonorato/job-orchestrator:latest
     command: client
     restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     environment:
       PORT: 9000
     volumes:
       - client-data:/opt/data
+    tmpfs:
+      - /tmp
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
       interval: 30s
@@ -120,9 +140,18 @@ services:
         limits:
           cpus: '4'
           memory: 8G
+          pids: 256
         reservations:
           cpus: '1'
           memory: 1G
+    networks:
+      - api
+
+networks:
+  public:
+    internal: false
+  api:
+    internal: true
 
 volumes:
   server-data:
