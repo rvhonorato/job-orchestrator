@@ -7,11 +7,20 @@
 [![Crates.io](https://img.shields.io/crates/v/job-orchestrator)](https://crates.io/crates/job-orchestrator)
 [![Documentation](https://img.shields.io/badge/docs-mdbook-blue)](https://rvhonorato.me/job-orchestrator/)
 
-> An asynchronous job orchestration system for managing and distributing computational workloads across heterogeneous computing resources with intelligent quota-based load balancing.
+> An asynchronous job orchestration system for managing
+> and distributing computational workloads across
+> heterogeneous computing resources with intelligent
+> quota-based load balancing.
 
 ## Overview
 
-job-orchestrator is a central component of [WeNMR](https://wenmr.science.uu.nl), a worldwide e-Infrastructure for structural biology operated by the [BonvinLab](https://bonvinlab.org) at [Utrecht University](https://uu.nl). It serves as a reactive middleware layer that connects web applications to diverse computing resources.
+The `job-orchestrator` is a central component of
+[WeNMR](https://wenmr.science.uu.nl), a worldwide
+e-Infrastructure for structural biology operated by
+the [BonvinLab](https://bonvinlab.org) at
+[Utrecht University](https://uu.nl). It serves as a
+reactive middleware layer that connects web applications
+to diverse computing resources.
 
 **Key Features:**
 
@@ -44,7 +53,7 @@ curl -o results.zip http://localhost:5000/download/1
 
 ## Documentation
 
-📚 **[Full Documentation](https://rvhonorato.me/job-orchestrator/)**
+**[Full Documentation](https://rvhonorato.me/job-orchestrator/)**
 
 - [Installation](https://rvhonorato.me/job-orchestrator/getting-started/installation.html)
 - [Architecture](https://rvhonorato.me/job-orchestrator/architecture/overview.html)
@@ -52,7 +61,8 @@ curl -o results.zip http://localhost:5000/download/1
 - [API Reference](https://rvhonorato.me/job-orchestrator/api/server-endpoints.html)
 - [Deployment](https://rvhonorato.me/job-orchestrator/deployment/docker.html)
 
-**API Documentation**: Available via Swagger UI at `http://localhost:5000/swagger/` when running.
+**API Documentation**: Available via Swagger UI at
+`http://localhost:5000/swagger/` when running.
 
 ## Installation
 
@@ -68,9 +78,13 @@ cargo build --release
 
 ## Contributing
 
-Contributions, bug reports, and feature requests are welcome via [GitHub Issues](https://github.com/rvhonorato/job-orchestrator/issues).
+Contributions, bug reports, and feature requests are
+welcome via
+[GitHub Issues](https://github.com/rvhonorato/job-orchestrator/issues).
 
-See the [Contributing Guide](https://rvhonorato.me/job-orchestrator/development/contributing.html) for details.
+See the
+[Contributing Guide](https://rvhonorato.me/job-orchestrator/development/contributing.html)
+for details.
 
 ## License
 
@@ -78,5 +92,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Contact
 
-- **Issues**: [GitHub Issues](https://github.com/rvhonorato/job-orchestrator/issues)
-- **Email**: Rodrigo V. Honorato <rvhonorato@protonmail.com>
+- **Issues**:
+  [GitHub Issues](https://github.com/rvhonorato/job-orchestrator/issues)
+- **Email**:
+  Rodrigo V. Honorato <rvhonorato@protonmail.com>
