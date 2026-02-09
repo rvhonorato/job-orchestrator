@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::process::Command;
+use std::sync::LazyLock;
 
 use crate::models::job_dao::Job;
 use crate::models::payload_dao::Payload;
@@ -179,94 +180,98 @@ impl Endpoint for Client {
 /// expected to come from trusted sources and be clean. This function is
 /// a defense-in-depth measure and can be bypassed by determined actors.
 fn validate_script(path: &Path) -> Result<(), ClientError> {
+    static DANGEROUS_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
+        [
+            // Destructive commands
+            (r"rm\s+(-[a-zA-Z]*)?.*(/|~)", "destructive rm command"),
+            (r"\bmkfs\b", "filesystem format command"),
+            (r"dd\s+.*of=/dev", "direct device write"),
+            (r"dd\s+.*if=/dev/(zero|urandom)", "disk-filling dd command"),
+            // Sensitive file access
+            (r"/etc/passwd", "access to /etc/passwd"),
+            (r"/etc/shadow", "access to /etc/shadow"),
+            (r"/etc/sudoers", "access to /etc/sudoers"),
+            (r"/proc/", "access to /proc"),
+            (r"/sys/", "access to /sys"),
+            (r"~/.ssh/", "access to SSH keys"),
+            (r"/root/", "access to root home"),
+            (r"/var/run/docker\.sock", "access to Docker socket"),
+            // Network exfiltration tools
+            (r"\bcurl\b", "network tool: curl"),
+            (r"\bwget\b", "network tool: wget"),
+            (r"\bnc\b", "network tool: nc"),
+            (r"\bncat\b", "network tool: ncat"),
+            (r"\bsocat\b", "network tool: socat"),
+            (r"\bssh\b", "network tool: ssh"),
+            (r"\bscp\b", "network tool: scp"),
+            (r"\bsftp\b", "network tool: sftp"),
+            (r"\btelnet\b", "network tool: telnet"),
+            (r"\brsync\b", "network tool: rsync"),
+            // Reverse shells
+            (r"/dev/tcp/", "reverse shell via /dev/tcp"),
+            (r"/dev/udp/", "reverse shell via /dev/udp"),
+            // Privilege escalation
+            (r"\bsudo\b", "privilege escalation: sudo"),
+            (r"su\s+", "privilege escalation: su"),
+            (
+                r"chmod\s+[0-7]*[4-7][0-7]{2}|chmod\s+\+s",
+                "dangerous chmod",
+            ),
+            (r"\bchown\b", "ownership change: chown"),
+            // Container/system escape
+            (r"\bchroot\b", "container escape: chroot"),
+            (r"\bnsenter\b", "container escape: nsenter"),
+            (r"\bunshare\b", "container escape: unshare"),
+            (r"\bmount\b", "filesystem manipulation: mount"),
+            (r"\bumount\b", "filesystem manipulation: umount"),
+            (r"\bdocker\b", "container escape: docker"),
+            (r"\bkubectl\b", "container escape: kubectl"),
+            // Kernel/system manipulation
+            (r"\bsysctl\b", "kernel manipulation: sysctl"),
+            (r"\bmodprobe\b", "kernel module: modprobe"),
+            (r"\binsmod\b", "kernel module: insmod"),
+            (r"\brmmod\b", "kernel module: rmmod"),
+            (r"\biptables\b", "firewall manipulation: iptables"),
+            (r"\bnftables\b", "firewall manipulation: nftables"),
+            // Obfuscated execution
+            (
+                r"base64.*\|\s*(bash|sh)",
+                "obfuscated execution: base64 pipe to shell",
+            ),
+            (r"\beval\s+", "dynamic code execution: eval"),
+            (r"\bpython[23]?\s+-c\b", "inline interpreter: python"),
+            (r"\bperl\s+-e\b", "inline interpreter: perl"),
+            (r"\bruby\s+-e\b", "inline interpreter: ruby"),
+            // Persistence mechanisms
+            (r"\bcrontab\b", "persistence: crontab"),
+            (r"/etc/cron", "persistence: cron directory"),
+            (r"\bsystemctl\b", "persistence: systemctl"),
+            (r"\bservice\s+", "persistence: service command"),
+            (r"\bat\b", "persistence: at scheduler"),
+            // Fork bombs
+            (r":\(\)\{.*:\|:", "fork bomb"),
+            // Resource exhaustion
+            (r"\bstress\b", "resource exhaustion: stress"),
+            (r"\bstress-ng\b", "resource exhaustion: stress-ng"),
+            // Crypto mining
+            (r"\bxmrig\b", "crypto mining: xmrig"),
+            (r"\bminerd\b", "crypto mining: minerd"),
+            (r"\bcpuminer\b", "crypto mining: cpuminer"),
+            // Environment secrets
+            (r"\$AWS_", "environment secret: AWS"),
+            (r"\$SECRET", "environment secret: SECRET"),
+            (r"\$TOKEN", "environment secret: TOKEN"),
+            (r"\$PASSWORD", "environment secret: PASSWORD"),
+            (r"\$API_KEY", "environment secret: API_KEY"),
+        ]
+        .into_iter()
+        .map(|(pat, desc)| (Regex::new(pat).expect("invalid regex pattern"), desc))
+        .collect()
+    });
+
     let content = std::fs::read_to_string(path).map_err(|_| ClientError::NoExecScript)?;
 
-    let dangerous_patterns: &[(&str, &str)] = &[
-        // Destructive commands
-        (r"rm\s+(-[a-zA-Z]*)?.*(/|~)", "destructive rm command"),
-        (r"\bmkfs\b", "filesystem format command"),
-        (r"dd\s+.*of=/dev", "direct device write"),
-        (r"dd\s+.*if=/dev/(zero|urandom)", "disk-filling dd command"),
-        // Sensitive file access
-        (r"/etc/passwd", "access to /etc/passwd"),
-        (r"/etc/shadow", "access to /etc/shadow"),
-        (r"/etc/sudoers", "access to /etc/sudoers"),
-        (r"/proc/", "access to /proc"),
-        (r"/sys/", "access to /sys"),
-        (r"~/.ssh/", "access to SSH keys"),
-        (r"/root/", "access to root home"),
-        (r"/var/run/docker\.sock", "access to Docker socket"),
-        // Network exfiltration tools
-        (r"\bcurl\b", "network tool: curl"),
-        (r"\bwget\b", "network tool: wget"),
-        (r"\bnc\b", "network tool: nc"),
-        (r"\bncat\b", "network tool: ncat"),
-        (r"\bsocat\b", "network tool: socat"),
-        (r"\bssh\b", "network tool: ssh"),
-        (r"\bscp\b", "network tool: scp"),
-        (r"\bsftp\b", "network tool: sftp"),
-        (r"\btelnet\b", "network tool: telnet"),
-        (r"\brsync\b", "network tool: rsync"),
-        // Reverse shells
-        (r"/dev/tcp/", "reverse shell via /dev/tcp"),
-        (r"/dev/udp/", "reverse shell via /dev/udp"),
-        // Privilege escalation
-        (r"\bsudo\b", "privilege escalation: sudo"),
-        (r"su\s+", "privilege escalation: su"),
-        (
-            r"chmod\s+[0-7]*[4-7][0-7]{2}|chmod\s+\+s",
-            "dangerous chmod",
-        ),
-        (r"\bchown\b", "ownership change: chown"),
-        // Container/system escape
-        (r"\bchroot\b", "container escape: chroot"),
-        (r"\bnsenter\b", "container escape: nsenter"),
-        (r"\bunshare\b", "container escape: unshare"),
-        (r"\bmount\b", "filesystem manipulation: mount"),
-        (r"\bumount\b", "filesystem manipulation: umount"),
-        (r"\bdocker\b", "container escape: docker"),
-        (r"\bkubectl\b", "container escape: kubectl"),
-        // Kernel/system manipulation
-        (r"\bsysctl\b", "kernel manipulation: sysctl"),
-        (r"\bmodprobe\b", "kernel module: modprobe"),
-        (r"\binsmod\b", "kernel module: insmod"),
-        (r"\brmmod\b", "kernel module: rmmod"),
-        (r"\biptables\b", "firewall manipulation: iptables"),
-        (r"\bnftables\b", "firewall manipulation: nftables"),
-        // Obfuscated execution
-        (
-            r"base64.*\|\s*(bash|sh)",
-            "obfuscated execution: base64 pipe to shell",
-        ),
-        (r"\beval\s+", "dynamic code execution: eval"),
-        (r"\bpython[23]?\s+-c\b", "inline interpreter: python"),
-        (r"\bperl\s+-e\b", "inline interpreter: perl"),
-        (r"\bruby\s+-e\b", "inline interpreter: ruby"),
-        // Persistence mechanisms
-        (r"\bcrontab\b", "persistence: crontab"),
-        (r"/etc/cron", "persistence: cron directory"),
-        (r"\bsystemctl\b", "persistence: systemctl"),
-        (r"\bservice\s+", "persistence: service command"),
-        (r"\bat\b", "persistence: at scheduler"),
-        // Fork bombs
-        (r":\(\)\{.*:\|:", "fork bomb"),
-        // Resource exhaustion
-        (r"\bstress\b", "resource exhaustion: stress"),
-        (r"\bstress-ng\b", "resource exhaustion: stress-ng"),
-        // Crypto mining
-        (r"\bxmrig\b", "crypto mining: xmrig"),
-        (r"\bminerd\b", "crypto mining: minerd"),
-        (r"\bcpuminer\b", "crypto mining: cpuminer"),
-        // Environment secrets
-        (r"\$AWS_", "environment secret: AWS"),
-        (r"\$SECRET", "environment secret: SECRET"),
-        (r"\$TOKEN", "environment secret: TOKEN"),
-        (r"\$PASSWORD", "environment secret: PASSWORD"),
-        (r"\$API_KEY", "environment secret: API_KEY"),
-    ];
-
-    for (pattern, description) in dangerous_patterns {
-        let re = Regex::new(pattern).expect("invalid regex pattern");
+    for (re, description) in &*DANGEROUS_PATTERNS {
         if re.is_match(&content) {
             return Err(ClientError::UnsafeScript {
                 reason: description.to_string(),
