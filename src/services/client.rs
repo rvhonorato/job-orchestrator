@@ -183,6 +183,9 @@ fn validate_script(path: &Path) -> Result<(), ClientError> {
     static DANGEROUS_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
         [
             // Destructive commands
+            //  NOTE: This regex will match all `rm` usages and this
+            //   could lead to false positives. Keep this in mind
+            //   when creating scripts!
             (r"rm\s+(-[a-zA-Z]*)?.*(/|~)", "destructive rm command"),
             (r"\bmkfs\b", "filesystem format command"),
             (r"dd\s+.*of=/dev", "direct device write"),
@@ -247,7 +250,12 @@ fn validate_script(path: &Path) -> Result<(), ClientError> {
             (r"/etc/cron", "persistence: cron directory"),
             (r"\bsystemctl\b", "persistence: systemctl"),
             (r"\bservice\s+", "persistence: service command"),
-            (r"\bat\b", "persistence: at scheduler"),
+            // NOTE: The regex below is an improvment on the `\bat\b` regex
+            // that would effectively match anything that has the words `at`
+            (
+                r"(?m)(?:^|[;&|]{1,2}\s*)at(?:\s+|-|\b)",
+                "persistence: at scheduler",
+            ),
             // Fork bombs
             (r":\(\)\{.*:\|:", "fork bomb"),
             // Resource exhaustion
@@ -269,7 +277,18 @@ fn validate_script(path: &Path) -> Result<(), ClientError> {
         .collect()
     });
 
-    let content = std::fs::read_to_string(path).map_err(|_| ClientError::NoExecScript)?;
+    // Since the script will be loaded fully to memory, check its size!
+    const MAX_SCRIPT_SIZE: u64 = 1024 * 1024 * 20; // 20 MiB
+    let metadata = std::fs::metadata(path).map_err(|_| ClientError::NoExecScript)?;
+    if metadata.len() > MAX_SCRIPT_SIZE {
+        return Err(ClientError::UnsafeScript {
+            reason: "script too large".to_string(),
+        });
+    }
+    let bytes = std::fs::read(path).map_err(|_| ClientError::NoExecScript)?;
+    let content = String::from_utf8(bytes).map_err(|_| ClientError::UnsafeScript {
+        reason: "script is not valid UTF-8".to_string(),
+    })?;
 
     for (re, description) in &*DANGEROUS_PATTERNS {
         if re.is_match(&content) {
