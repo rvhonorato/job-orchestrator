@@ -44,6 +44,9 @@ RUN cargo build --release
 #   docker run <image> /job-orchestrator client
 FROM alpine:3.23.3 AS runtime
 
+# TODO: Run as non-root user for production hardening. Requires migrating
+# existing volume ownership first (see README Security section).
+#   addgroup -S appgroup && adduser -S appuser -G appgroup -u 10001
 RUN apk add --no-cache bash
 
 COPY --from=build /opt/target/release/job-orchestrator /job-orchestrator
