@@ -15,7 +15,16 @@ COPY . .
 RUN cargo build --release
 
 #===============================================================================
-# Application that will run inside the client gets installed here
+# Example application - replace this with your own application.
+#
+#  `gdock` is used here as a demonstration; any application can be
+#  used instead, as long as it is callable from a `run.sh` script.
+#
+#  This stage compiles a binary from source. Alternatives include:
+#   - Copying a pre-built binary from a URL or local path
+#   - Installing a Python package (pip install ...)
+#   - Any other setup, as long as the result is available for
+#     COPY --from=application in the client stage below
 FROM rust:alpine AS application
 
 RUN apk add --no-cache git
@@ -25,29 +34,35 @@ RUN git clone --branch v2.0.0-rc.2 --depth 1 https://github.com/rvhonorato/gdock
 WORKDIR /opt/gdock
 RUN cargo build --release
 
-# Binary will be in `/opt/gdock/target/release/gdock`
-
 #===============================================================================
-# Layer that will be running the job-orchestrator as `server`
-FROM scratch AS server
-
-COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=build /opt/target/release/job-orchestrator /job-orchestrator
-
-#===============================================================================
-# Layer that will be running the job-orchestrator as `client`
-#  it needs to execute in a layer that has `BASH`
-FROM alpine:3.23.3 AS client
+# Runtime base - includes bash (required for client mode to
+#  execute run.sh scripts) and the job-orchestrator binary.
+#
+#  This is the image published to ghcr.io; it can be used as
+#  either server or client:
+#   docker run <image> /job-orchestrator server
+#   docker run <image> /job-orchestrator client
+FROM alpine:3.23.3 AS runtime
 
 RUN apk add --no-cache bash
 
-COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build /opt/target/release/job-orchestrator /job-orchestrator
 
-# Make sure the example application exists in the `client` layer
+#===============================================================================
+# Server target - runtime only, no application needed
+FROM runtime AS server
+
+#===============================================================================
+# Client target - extends runtime with the example application.
+#
+#  Replace the COPY below with your own application binary or
+#  install your own dependencies here. The client executes jobs
+#  by running `bash run.sh` in the payload directory, so any
+#  tool referenced in run.sh must be available in this image.
+FROM runtime AS client
+
 COPY --from=application /opt/gdock/target/release/gdock /bin/gdock
 
 #===============================================================================
-FROM server AS default
+FROM runtime AS default
 #===============================================================================
-
