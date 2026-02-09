@@ -184,7 +184,7 @@ fn validate_script(path: &Path) -> Result<(), ClientError> {
     let dangerous_patterns: &[(&str, &str)] = &[
         // Destructive commands
         (r"rm\s+(-[a-zA-Z]*)?.*(/|~)", "destructive rm command"),
-        (r"mkfs", "filesystem format command"),
+        (r"\bmkfs\b", "filesystem format command"),
         (r"dd\s+.*of=/dev", "direct device write"),
         (r"dd\s+.*if=/dev/(zero|urandom)", "disk-filling dd command"),
         // Sensitive file access
@@ -197,11 +197,11 @@ fn validate_script(path: &Path) -> Result<(), ClientError> {
         (r"/root/", "access to root home"),
         (r"/var/run/docker\.sock", "access to Docker socket"),
         // Network exfiltration tools
-        (r"curl", "network tool: curl"),
-        (r"wget", "network tool: wget"),
-        (r"nc\b", "network tool: nc"),
-        (r"ncat", "network tool: ncat"),
-        (r"socat", "network tool: socat"),
+        (r"\bcurl\b", "network tool: curl"),
+        (r"\bwget\b", "network tool: wget"),
+        (r"\bnc\b", "network tool: nc"),
+        (r"\bncat\b", "network tool: ncat"),
+        (r"\bsocat\b", "network tool: socat"),
         (r"\bssh\b", "network tool: ssh"),
         (r"\bscp\b", "network tool: scp"),
         (r"\bsftp\b", "network tool: sftp"),
@@ -211,13 +211,13 @@ fn validate_script(path: &Path) -> Result<(), ClientError> {
         (r"/dev/tcp/", "reverse shell via /dev/tcp"),
         (r"/dev/udp/", "reverse shell via /dev/udp"),
         // Privilege escalation
-        (r"sudo", "privilege escalation: sudo"),
+        (r"\bsudo\b", "privilege escalation: sudo"),
         (r"su\s+", "privilege escalation: su"),
         (
             r"chmod\s+[0-7]*[4-7][0-7]{2}|chmod\s+\+s",
             "dangerous chmod",
         ),
-        (r"chown", "ownership change: chown"),
+        (r"\bchown\b", "ownership change: chown"),
         // Container/system escape
         (r"\bchroot\b", "container escape: chroot"),
         (r"\bnsenter\b", "container escape: nsenter"),
