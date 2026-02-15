@@ -47,10 +47,8 @@ pub async fn download(
         Status::Failed => Err(StatusCode::GONE),
         Status::Invalid => Err(StatusCode::BAD_REQUEST),
         Status::Unknown => Err(StatusCode::INTERNAL_SERVER_ERROR),
-        Status::Processing => Err(StatusCode::PROCESSING),
-        Status::Pending | Status::Queued | Status::Submitted | Status::Prepared => {
-            Err(StatusCode::ACCEPTED)
-        }
+        Status::Processing | Status::Submitted => Err(StatusCode::PROCESSING),
+        Status::Pending | Status::Queued | Status::Prepared => Err(StatusCode::ACCEPTED),
     }
 }
 
@@ -780,7 +778,7 @@ mod tests {
 
         match download(state, path).await {
             Ok(_) => panic!("Expected error"),
-            Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
+            Err(e) => assert_eq!(e, StatusCode::PROCESSING),
         }
     }
 
@@ -792,6 +790,24 @@ mod tests {
         let mut job = Job::new("");
         job.add_to_db(&pool).await.unwrap();
         job.update_status(Status::Submitted, &pool).await.unwrap();
+
+        let state = State(AppState { pool, config });
+        let path = Path(job.id);
+
+        match download(state, path).await {
+            Ok(_) => panic!("Expected error"),
+            Err(e) => assert_eq!(e, StatusCode::PROCESSING),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_download_prepared_job() {
+        let config = Config::new().unwrap();
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        let mut job = Job::new("");
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Prepared, &pool).await.unwrap();
 
         let state = State(AppState { pool, config });
         let path = Path(job.id);
