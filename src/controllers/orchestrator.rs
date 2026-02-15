@@ -18,7 +18,8 @@ use utoipa;
     ),
     responses(
         (status = 200, description = "Job completed, downloading results", body = Vec<u8>),
-        (status = 202, description = "Job still processing"),
+        (status = 202, description = "Job is queued"),
+        (status = 102, description = "Job is running"),
         (status = 204, description = "Job results cleaned up (expired)"),
         (status = 400, description = "Job invalid (user error)"),
         (status = 404, description = "Job not found"),
@@ -46,11 +47,10 @@ pub async fn download(
         Status::Failed => Err(StatusCode::GONE),
         Status::Invalid => Err(StatusCode::BAD_REQUEST),
         Status::Unknown => Err(StatusCode::INTERNAL_SERVER_ERROR),
-        Status::Pending
-        | Status::Processing
-        | Status::Queued
-        | Status::Submitted
-        | Status::Prepared => Err(StatusCode::ACCEPTED),
+        Status::Processing => Err(StatusCode::PROCESSING),
+        Status::Pending | Status::Queued | Status::Submitted | Status::Prepared => {
+            Err(StatusCode::ACCEPTED)
+        }
     }
 }
 
