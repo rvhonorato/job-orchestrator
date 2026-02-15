@@ -44,6 +44,7 @@ impl Status {
             "queued" => Status::Queued,
             "submitted" => Status::Submitted,
             "cleaned" => Status::Cleaned,
+            "prepared" => Status::Prepared,
             _ => Status::Unknown,
         }
     }
@@ -117,6 +118,7 @@ mod tests {
         assert_eq!(Status::from_string("queued"), Status::Queued);
         assert_eq!(Status::from_string("submitted"), Status::Submitted);
         assert_eq!(Status::from_string("cleaned"), Status::Cleaned);
+        assert_eq!(Status::from_string("prepared"), Status::Prepared);
     }
 
     #[test]
@@ -129,6 +131,7 @@ mod tests {
         assert_eq!(Status::from_string("QUEUED"), Status::Queued);
         assert_eq!(Status::from_string("SUBMITTED"), Status::Submitted);
         assert_eq!(Status::from_string("CLEANED"), Status::Cleaned);
+        assert_eq!(Status::from_string("PREPARED"), Status::Prepared);
     }
 
     #[test]
@@ -165,9 +168,8 @@ mod tests {
     }
 
     #[test]
-    fn test_from_string_prepared_not_in_from_string() {
-        // "prepared" is not in the from_string match, should return Unknown
-        assert_eq!(Status::from_string("prepared"), Status::Unknown);
+    fn test_from_string_prepared() {
+        assert_eq!(Status::from_string("prepared"), Status::Prepared);
     }
 
     // ===== Round-trip tests =====
@@ -206,6 +208,10 @@ mod tests {
         assert_eq!(
             Status::from_string(&format!("{}", Status::Cleaned)),
             Status::Cleaned
+        );
+        assert_eq!(
+            Status::from_string(&format!("{}", Status::Prepared)),
+            Status::Prepared
         );
     }
 
