@@ -101,7 +101,10 @@ pub async fn retrieve(
         Status::Invalid => Err(StatusCode::BAD_REQUEST),
         Status::Failed => Err(StatusCode::INTERNAL_SERVER_ERROR),
         Status::Cleaned => Err(StatusCode::NO_CONTENT),
-        Status::Running => Err(StatusCode::PROCESSING),
+        Status::Running => {
+            // FIXME: StatusCode::PROCESSING becomes 500! cannot use this one
+            Err(StatusCode::PROCESSING)
+        }
         _ => Err(StatusCode::ACCEPTED),
     }
 }

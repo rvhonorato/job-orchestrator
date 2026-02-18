@@ -47,6 +47,7 @@ pub async fn download(
         Status::Failed => Err(StatusCode::GONE),
         Status::Invalid => Err(StatusCode::BAD_REQUEST),
         Status::Unknown => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        // FIXME: StatusCode::PROCESSING becomes 500! cannot use this one
         Status::Submitted | Status::Running => Err(StatusCode::PROCESSING),
         Status::Processing | Status::Queued | Status::Prepared => Err(StatusCode::ACCEPTED),
     }
