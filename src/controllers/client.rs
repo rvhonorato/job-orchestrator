@@ -72,7 +72,8 @@ pub async fn submit(
     ),
     responses(
         (status = 200, description = "File downloaded successfully", body = Vec<u8>),
-        (status = 202, description = "Job not ready"),
+        (status = 201, description = "Job is queued"), // QUEUED == CREATED
+        (status = 202, description = "Job not ready"), // RUNNING == ACCEPTED
         (status = 204, description = "Job failed or cleaned"),
         (status = 404, description = "Job not found"),
         (status = 500, description = "Internal server error")
@@ -101,11 +102,10 @@ pub async fn retrieve(
         Status::Invalid => Err(StatusCode::BAD_REQUEST),
         Status::Failed => Err(StatusCode::INTERNAL_SERVER_ERROR),
         Status::Cleaned => Err(StatusCode::NO_CONTENT),
-        Status::Running => {
-            // FIXME: StatusCode::PROCESSING becomes 500! cannot use this one
-            Err(StatusCode::PROCESSING)
-        }
-        _ => Err(StatusCode::ACCEPTED),
+        Status::Queued => Err(StatusCode::CREATED),
+        Status::Running => Err(StatusCode::ACCEPTED),
+        // Catch all
+        _ => Err(StatusCode::CREATED),
     }
 }
 
@@ -557,7 +557,7 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        assert_eq!(response.status(), StatusCode::CREATED);
     }
 
     #[tokio::test]
@@ -629,6 +629,6 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        assert_eq!(response.status(), StatusCode::CREATED);
     }
 }

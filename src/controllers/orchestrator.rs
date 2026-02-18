@@ -18,13 +18,13 @@ use utoipa;
     ),
     responses(
         (status = 200, description = "Job completed, downloading results", body = Vec<u8>), // OK
-        (status = 202, description = "Job is queued"), // ACCEPTED
-        (status = 102, description = "Job is running"), // PROCESSING
+        (status = 202, description = "Job is running"), // RUNNING == ACCEPTED
         (status = 204, description = "Job results cleaned up (expired)"), // NO_CONTENT
+        (status = 201, description = "Job is queued"), // QUEUED == CREATED
         (status = 400, description = "Job invalid (user error)"), // BAD_REQUEST
         (status = 404, description = "Job not found"), // NOT_FOUND
         (status = 410, description = "Job failed"), // GONE
-        (status = 500, description = "Internal server error or unknown state") // INTERNAL_SERVER_ERROR
+        (status = 500, description = "Internal server error or unknown state"), // INTERNAL_SERVER_ERROR
     ),
     tag = "files"
 )]
@@ -47,9 +47,8 @@ pub async fn download(
         Status::Failed => Err(StatusCode::GONE),
         Status::Invalid => Err(StatusCode::BAD_REQUEST),
         Status::Unknown => Err(StatusCode::INTERNAL_SERVER_ERROR),
-        // FIXME: StatusCode::PROCESSING becomes 500! cannot use this one
-        Status::Submitted | Status::Running => Err(StatusCode::PROCESSING),
-        Status::Processing | Status::Queued | Status::Prepared => Err(StatusCode::ACCEPTED),
+        Status::Submitted | Status::Running => Err(StatusCode::ACCEPTED),
+        Status::Processing | Status::Queued | Status::Prepared => Err(StatusCode::CREATED),
     }
 }
 
@@ -431,7 +430,7 @@ mod tests {
         let response = download(state, path).await;
         match response {
             Ok(_) => {}
-            Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
+            Err(e) => assert_eq!(e, StatusCode::CREATED),
         }
     }
 
@@ -458,7 +457,7 @@ mod tests {
         let response = download(state, path).await;
         match response {
             Ok(_) => {}
-            Err(e) => assert_eq!(e, StatusCode::PROCESSING),
+            Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
         }
     }
 
@@ -547,7 +546,7 @@ mod tests {
 
         match download(state, path).await {
             Ok(_) => {}
-            Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
+            Err(e) => assert_eq!(e, StatusCode::CREATED),
         }
     }
 
@@ -815,7 +814,7 @@ mod tests {
 
         match download(state, path).await {
             Ok(_) => panic!("Expected error"),
-            Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
+            Err(e) => assert_eq!(e, StatusCode::CREATED),
         }
     }
 
@@ -833,7 +832,7 @@ mod tests {
 
         match download(state, path).await {
             Ok(_) => panic!("Expected error"),
-            Err(e) => assert_eq!(e, StatusCode::PROCESSING),
+            Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
         }
     }
 
@@ -851,7 +850,7 @@ mod tests {
 
         match download(state, path).await {
             Ok(_) => panic!("Expected error"),
-            Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
+            Err(e) => assert_eq!(e, StatusCode::CREATED),
         }
     }
 

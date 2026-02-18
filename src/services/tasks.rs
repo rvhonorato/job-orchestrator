@@ -642,7 +642,7 @@ mod test {
         let mut updated_job = Job::new("");
         updated_job.retrieve_id(job_id, &pool).await.unwrap();
 
-        assert_eq!(updated_job.status, Status::Failed);
+        assert_eq!(updated_job.status, Status::Unknown);
     }
 
     /// When a service returns HTTP 400 BAD_REQUEST, getter() should set the job status to Invalid.
