@@ -16,9 +16,7 @@ use sysinfo::System;
     ),
     responses(
         (status = 200, description = "File uploaded successfully", body = Payload),
-        // (status = 400, description = "Bad request"),
         (status = 500, description = "Internal server error"),
-        // (status = 503, description = "Service unavailable")
     ),
     tag = "files"
 )]
@@ -103,6 +101,7 @@ pub async fn retrieve(
         Status::Invalid => Err(StatusCode::BAD_REQUEST),
         Status::Failed => Err(StatusCode::INTERNAL_SERVER_ERROR),
         Status::Cleaned => Err(StatusCode::NO_CONTENT),
+        Status::Running => Err(StatusCode::PROCESSING),
         _ => Err(StatusCode::ACCEPTED),
     }
 }
@@ -521,42 +520,6 @@ mod tests {
     }
 
     // ===== Additional retrieve tests =====
-
-    #[tokio::test]
-    async fn test_retrieve_pending_status() {
-        let data_dir = tempdir().unwrap();
-        let mut config = Config::new().unwrap();
-        config.data_path = data_dir.path().to_str().unwrap().to_string();
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        init_db(&pool).await.unwrap();
-        let state = AppState {
-            pool: pool.clone(),
-            config: config.clone(),
-        };
-
-        let mut payload = Payload::new();
-        payload
-            .prepare(&state.config.data_path)
-            .expect("Failed to prepare");
-        payload.add_to_db(&pool).await.expect("Failed to add to db");
-        payload
-            .update_status(Status::Pending, &pool)
-            .await
-            .expect("Failed to update status");
-
-        let app = Router::new()
-            .route("/retrieve/{id}", get(retrieve))
-            .with_state(state);
-
-        let req = Request::builder()
-            .method("GET")
-            .uri(format!("/retrieve/{}", payload.id))
-            .body(Body::empty())
-            .unwrap();
-
-        let response = app.oneshot(req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::ACCEPTED);
-    }
 
     #[tokio::test]
     async fn test_retrieve_processing_status() {

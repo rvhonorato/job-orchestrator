@@ -47,8 +47,8 @@ pub async fn download(
         Status::Failed => Err(StatusCode::GONE),
         Status::Invalid => Err(StatusCode::BAD_REQUEST),
         Status::Unknown => Err(StatusCode::INTERNAL_SERVER_ERROR),
-        Status::Processing | Status::Submitted => Err(StatusCode::PROCESSING),
-        Status::Pending | Status::Queued | Status::Prepared => Err(StatusCode::ACCEPTED),
+        Status::Submitted | Status::Running => Err(StatusCode::PROCESSING),
+        Status::Processing | Status::Queued | Status::Prepared => Err(StatusCode::ACCEPTED),
     }
 }
 
@@ -407,6 +407,60 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn test_download_queued_job() {
+        let config = Config::new().unwrap();
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap(); // Mock database connection;
+        init_db(&pool).await.unwrap(); // Initialize the database schema
+
+        // Make a completed job
+        let data_dir = tempdir().unwrap();
+        let mut job = Job::new(data_dir.path().to_str().unwrap());
+        fs::create_dir(&job.loc).unwrap(); // Create data directory
+        let dummy_file_path = job.loc.join("output.zip");
+        let mut file = fs::File::create(&dummy_file_path).unwrap();
+        writeln!(file, "dummy data").unwrap(); // Create a dummy file
+                                               //
+        job.add_to_db(&pool).await.unwrap(); // Add job to the database;
+        job.update_status(Status::Queued, &pool).await.unwrap(); // Update job status to Failed;
+
+        let state = State(AppState { pool, config }); // Mock state for testing
+        let path = Path(job.id);
+
+        let response = download(state, path).await;
+        match response {
+            Ok(_) => {}
+            Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_download_running_job() {
+        let config = Config::new().unwrap();
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap(); // Mock database connection;
+        init_db(&pool).await.unwrap(); // Initialize the database schema
+
+        // Make a completed job
+        let data_dir = tempdir().unwrap();
+        let mut job = Job::new(data_dir.path().to_str().unwrap());
+        fs::create_dir(&job.loc).unwrap(); // Create data directory
+        let dummy_file_path = job.loc.join("output.zip");
+        let mut file = fs::File::create(&dummy_file_path).unwrap();
+        writeln!(file, "dummy data").unwrap(); // Create a dummy file
+                                               //
+        job.add_to_db(&pool).await.unwrap(); // Add job to the database;
+        job.update_status(Status::Running, &pool).await.unwrap(); // Update job status to Failed;
+
+        let state = State(AppState { pool, config }); // Mock state for testing
+        let path = Path(job.id);
+
+        let response = download(state, path).await;
+        match response {
+            Ok(_) => {}
+            Err(e) => assert_eq!(e, StatusCode::PROCESSING),
+        }
+    }
+
     /// Failed jobs should return 410 GONE to indicate the resource permanently failed.
     /// This distinguishes from Cleaned (204) which is a normal lifecycle state.
     #[tokio::test]
@@ -747,24 +801,6 @@ mod tests {
     // ===== Additional download status tests =====
 
     #[tokio::test]
-    async fn test_download_pending_job() {
-        let config = Config::new().unwrap();
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        init_db(&pool).await.unwrap();
-        let mut job = Job::new("");
-        job.add_to_db(&pool).await.unwrap();
-        job.update_status(Status::Pending, &pool).await.unwrap();
-
-        let state = State(AppState { pool, config });
-        let path = Path(job.id);
-
-        match download(state, path).await {
-            Ok(_) => panic!("Expected error"),
-            Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
-        }
-    }
-
-    #[tokio::test]
     async fn test_download_processing_job() {
         let config = Config::new().unwrap();
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -778,7 +814,7 @@ mod tests {
 
         match download(state, path).await {
             Ok(_) => panic!("Expected error"),
-            Err(e) => assert_eq!(e, StatusCode::PROCESSING),
+            Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
         }
     }
 

@@ -2,24 +2,25 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use utoipa::ToSchema;
 
+// TODO: These statuses are a bit confusing, some of them are just
+// used in the client and some only in the server and some used in both
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub enum Status {
-    Pending,
-    Processing,
-    Completed,
-    Failed,
-    Invalid,
-    Queued,
-    Submitted,
-    Unknown,
-    Cleaned,
-    Prepared,
+    Queued,     // Job recieved in the server
+    Processing, // Job is being sent to the client
+    Submitted,  // Job was sent to the client
+    Prepared,   // Ready to be executed in the client
+    Running,    // Running in the client
+    Cleaned,    // Job has been cleaned
+    Completed,  // Job complete
+    Failed,     // Job failed
+    Invalid,    // Job invalid
+    Unknown,    // Wildcard
 }
 
 impl fmt::Display for Status {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Status::Pending => write!(f, "pending"),
             Status::Prepared => write!(f, "prepared"),
             Status::Processing => write!(f, "processing"),
             Status::Completed => write!(f, "completed"),
@@ -29,6 +30,7 @@ impl fmt::Display for Status {
             Status::Submitted => write!(f, "submitted"),
             Status::Unknown => write!(f, "unknown"),
             Status::Cleaned => write!(f, "cleaned"),
+            Status::Running => write!(f, "running"),
         }
     }
 }
@@ -36,7 +38,6 @@ impl fmt::Display for Status {
 impl Status {
     pub fn from_string(s: &str) -> Self {
         match s.to_lowercase().as_str() {
-            "pending" => Status::Pending,
             "processing" => Status::Processing,
             "completed" => Status::Completed,
             "failed" => Status::Failed,
@@ -45,6 +46,7 @@ impl Status {
             "submitted" => Status::Submitted,
             "cleaned" => Status::Cleaned,
             "prepared" => Status::Prepared,
+            "running" => Status::Running,
             _ => Status::Unknown,
         }
     }
@@ -55,11 +57,6 @@ mod tests {
     use super::*;
 
     // ===== Display trait tests =====
-
-    #[test]
-    fn test_display_pending() {
-        assert_eq!(format!("{}", Status::Pending), "pending");
-    }
 
     #[test]
     fn test_display_prepared() {
@@ -106,11 +103,15 @@ mod tests {
         assert_eq!(format!("{}", Status::Cleaned), "cleaned");
     }
 
+    #[test]
+    fn test_display_running() {
+        assert_eq!(format!("{}", Status::Running), "running");
+    }
+
     // ===== from_string tests =====
 
     #[test]
     fn test_from_string_lowercase() {
-        assert_eq!(Status::from_string("pending"), Status::Pending);
         assert_eq!(Status::from_string("processing"), Status::Processing);
         assert_eq!(Status::from_string("completed"), Status::Completed);
         assert_eq!(Status::from_string("failed"), Status::Failed);
@@ -119,11 +120,11 @@ mod tests {
         assert_eq!(Status::from_string("submitted"), Status::Submitted);
         assert_eq!(Status::from_string("cleaned"), Status::Cleaned);
         assert_eq!(Status::from_string("prepared"), Status::Prepared);
+        assert_eq!(Status::from_string("running"), Status::Running);
     }
 
     #[test]
     fn test_from_string_uppercase() {
-        assert_eq!(Status::from_string("PENDING"), Status::Pending);
         assert_eq!(Status::from_string("PROCESSING"), Status::Processing);
         assert_eq!(Status::from_string("COMPLETED"), Status::Completed);
         assert_eq!(Status::from_string("FAILED"), Status::Failed);
@@ -132,11 +133,11 @@ mod tests {
         assert_eq!(Status::from_string("SUBMITTED"), Status::Submitted);
         assert_eq!(Status::from_string("CLEANED"), Status::Cleaned);
         assert_eq!(Status::from_string("PREPARED"), Status::Prepared);
+        assert_eq!(Status::from_string("Running"), Status::Running);
     }
 
     #[test]
     fn test_from_string_mixed_case() {
-        assert_eq!(Status::from_string("PeNdInG"), Status::Pending);
         assert_eq!(Status::from_string("ProCeSsiNG"), Status::Processing);
         assert_eq!(Status::from_string("ComPlEtEd"), Status::Completed);
     }
@@ -178,10 +179,6 @@ mod tests {
     fn test_roundtrip_display_from_string() {
         // Test that Display -> from_string works for statuses that have from_string support
         assert_eq!(
-            Status::from_string(&format!("{}", Status::Pending)),
-            Status::Pending
-        );
-        assert_eq!(
             Status::from_string(&format!("{}", Status::Processing)),
             Status::Processing
         );
@@ -213,20 +210,24 @@ mod tests {
             Status::from_string(&format!("{}", Status::Prepared)),
             Status::Prepared
         );
+        assert_eq!(
+            Status::from_string(&format!("{}", Status::Running)),
+            Status::Running
+        );
     }
 
     // ===== Equality tests =====
 
     #[test]
     fn test_status_equality() {
-        assert_eq!(Status::Pending, Status::Pending);
-        assert_ne!(Status::Pending, Status::Processing);
+        assert_eq!(Status::Completed, Status::Completed);
+        assert_ne!(Status::Queued, Status::Processing);
         assert_ne!(Status::Completed, Status::Failed);
     }
 
     #[test]
     fn test_status_clone() {
-        let status = Status::Pending;
+        let status = Status::Processing;
         let cloned = status.clone();
         assert_eq!(status, cloned);
     }

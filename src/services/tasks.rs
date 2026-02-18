@@ -106,10 +106,14 @@ pub async fn sender(pool: SqlitePool, config: Config) {
     }
 }
 
+// The getter task retrieves the jobs from the Client and updates the status on the Server
 pub async fn getter(pool: SqlitePool, config: Config) {
     let mut queue = Queue::new(&config);
 
-    if let Err(e) = queue.list_per_status(Status::Submitted, &pool).await {
+    if let Err(e) = queue
+        .list_per_status(vec![Status::Submitted, Status::Running], &pool)
+        .await
+    {
         error!("Failed to fetch submitted jobs: {:?}", e);
         return;
     }
@@ -127,8 +131,16 @@ pub async fn getter(pool: SqlitePool, config: Config) {
                             info!("Job {} completed successfully", j.id);
                         }
                     }
+                    Err(DownloadError::JobRunning) => {
+                        info!("Job {} is running in the client", j.id);
+                        j.update_status(Status::Running, &pool).await.ok();
+                    }
                     Err(DownloadError::JobNotReady) => {
-                        debug!("Job {} not ready yet", j.id);
+                        info!(
+                            "Job {} has been submitted and is queued in the client",
+                            j.id
+                        );
+                        // No action!
                     }
                     Err(DownloadError::JobNotFound) => {
                         warn!("Job {} not found on server", j.id);
@@ -170,6 +182,10 @@ pub async fn runner(pool: SqlitePool, config: Config) {
             .map(|mut j| {
                 let pool_clone = pool.clone();
                 tokio::spawn(async move {
+                    // Mark the job as running, without this status it will stay in `Processing`
+                    //  until the `execute_payload` has finished
+                    j.update_status(Status::Running, &pool_clone).await.ok();
+
                     match execute_payload(&j) {
                         Ok(_) => {
                             j.update_status(Status::Completed, &pool_clone).await.ok();
@@ -273,8 +289,6 @@ mod test {
         let mut _job = Job::new(tempdir.path().to_str().unwrap());
         _job.retrieve_id(id, &pool).await.unwrap();
 
-        // Since nothing is configured, it will fail
-        //  and set the job as Unknown
         assert_eq!(_job.status, Status::Unknown);
 
         // TODO: Add mock the `retrieve` function to test the match arm

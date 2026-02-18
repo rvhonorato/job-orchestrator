@@ -36,6 +36,8 @@ pub enum DownloadError {
     JobNotFound,
     #[error("Job not ready yet")]
     JobNotReady,
+    #[error("Job is being executed")]
+    JobRunning,
     #[error("Job failed during execution")]
     JobFailed,
     #[error("Job results cleaned up (expired)")]
