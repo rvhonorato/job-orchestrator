@@ -136,11 +136,11 @@ pub async fn getter(pool: SqlitePool, config: Config) {
                         j.update_status(Status::Running, &pool).await.ok();
                     }
                     Err(DownloadError::JobNotReady) => {
-                        info!(
+                        debug!(
                             "Job {} has been submitted and is queued in the client",
                             j.id
                         );
-                        // No action!
+                        // No action!!
                     }
                     Err(DownloadError::JobNotFound) => {
                         warn!("Job {} not found on server", j.id);
