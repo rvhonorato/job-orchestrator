@@ -40,6 +40,8 @@ pub enum DownloadError {
     JobRunning,
     #[error("Job failed during execution")]
     JobFailed,
+    #[error("Job could not be executed by client")]
+    JobCouldNotBeExecuted,
     #[error("Job results cleaned up (expired)")]
     JobCleaned,
     #[error("Job invalid (user error)")]

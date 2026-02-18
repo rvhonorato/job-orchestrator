@@ -162,7 +162,7 @@ impl Endpoint for Client {
             StatusCode::BAD_REQUEST => Err(DownloadError::JobInvalid),
             StatusCode::NOT_FOUND => Err(DownloadError::JobNotFound),
             StatusCode::GONE => Err(DownloadError::JobFailed),
-            StatusCode::INTERNAL_SERVER_ERROR => Err(DownloadError::JobFailed),
+            StatusCode::INTERNAL_SERVER_ERROR => Err(DownloadError::JobCouldNotBeExecuted),
             _ => {
                 let body = response
                     .text()

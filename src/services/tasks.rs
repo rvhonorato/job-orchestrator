@@ -158,6 +158,10 @@ pub async fn getter(pool: SqlitePool, config: Config) {
                         warn!("Job {} invalid (user error)", j.id);
                         j.update_status(Status::Invalid, &pool).await.ok();
                     }
+                    Err(DownloadError::JobCouldNotBeExecuted) => {
+                        error!("Job {} could not be executed", j.id);
+                        j.update_status(Status::Unknown, &pool).await.ok();
+                    }
                     Err(e) => {
                         error!("Failed to download job {}: {:?}", j.id, e);
                         j.update_status(Status::Unknown, &pool).await.ok();
