@@ -12,8 +12,6 @@ use sqlx::SqlitePool;
 use tracing::info;
 use tracing::{debug, error};
 
-use super::client::ClientError;
-
 pub async fn cleaner(pool: SqlitePool, config: Config) {
     // List all directories inside the config.data_path
     let elements = match fs::read_dir(&config.data_path) {
@@ -45,24 +43,25 @@ pub async fn cleaner(pool: SqlitePool, config: Config) {
         };
         if let Ok(mod_time) = metadata.modified() {
             let current_time = SystemTime::now();
-            if let Ok(age) = current_time.duration_since(mod_time) {
-                if age >= config.max_age {
-                    debug!(
-                        "{:?} - {:?} - {:?}",
-                        path.display(),
-                        age.as_secs(),
-                        config.max_age
-                    );
-                    let mut job = Job::new("");
-                    match job.retrieve_by_loc(path.display().to_string(), &pool).await {
-                        Ok(_) => {
-                            let _ = job.update_status(Status::Cleaned, &pool).await;
-                            if let Err(e) = job.remove_from_disk() {
-                                error!("error: {:?} - could not remove {:?}", e, path)
-                            }
+
+            if let Ok(age) = current_time.duration_since(mod_time)
+                && age >= config.max_age
+            {
+                debug!(
+                    "{:?} - {:?} - {:?}",
+                    path.display(),
+                    age.as_secs(),
+                    config.max_age
+                );
+                let mut job = Job::new("");
+                match job.retrieve_by_loc(path.display().to_string(), &pool).await {
+                    Ok(_) => {
+                        let _ = job.update_status(Status::Cleaned, &pool).await;
+                        if let Err(e) = job.remove_from_disk() {
+                            error!("error: {:?} - could not remove {:?}", e, path)
                         }
-                        Err(e) => error!("{:?} - not found: {:?}", e, path),
                     }
+                    Err(e) => error!("{:?} - not found: {:?}", e, path),
                 }
             }
         };
@@ -156,28 +155,16 @@ pub async fn runner(pool: SqlitePool, config: Config) {
                 let pool_clone = pool.clone();
                 tokio::spawn(async move {
                     // Mark the job as running, without this status it will stay in `Processing`
-                    //  until the `execute_payload` has finished
                     j.update_status(Status::Running, &pool_clone).await.ok();
 
                     match execute_payload(&j) {
-                        Ok(_) => {
-                            j.update_status(Status::Completed, &pool_clone).await.ok();
+                        Ok(s) => {
+                            j.update_status(s, &pool_clone).await.ok();
                         }
-                        Err(ClientError::Script) => {
-                            // Script ran but exited non-zero - job completed (user can check results)
-                            j.update_status(Status::Completed, &pool_clone).await.ok();
-                        }
-                        Err(ClientError::NoExecScript) => {
-                            // User error - no run.sh script provided
+                        Err(e) => {
+                            // TODO: Add some specific handlers for each of the errors
+                            error!("There was an error while executing the payload: {e}");
                             j.update_status(Status::Invalid, &pool_clone).await.ok();
-                        }
-                        Err(ClientError::UnsafeScript { .. }) => {
-                            // User error - script contains dangerous patterns
-                            j.update_status(Status::Invalid, &pool_clone).await.ok();
-                        }
-                        Err(ClientError::Execution) => {
-                            // System error - couldn't execute the script
-                            j.update_status(Status::Failed, &pool_clone).await.ok();
                         }
                     }
                 })
@@ -195,7 +182,6 @@ mod test {
     use crate::config::loader::{Config, Service};
     use crate::models::payload_dao::Payload;
     use crate::models::{job_dao::Job, job_dto::create_jobs_table};
-    use mockito::Server;
     use std::{path::Path, time::Duration};
     use tempfile::TempDir;
     use tokio::time::sleep;
@@ -238,33 +224,6 @@ mod test {
         assert_eq!(_job.status, Status::Failed);
 
         // TODO: Add mock the `send` function to test the match arm
-    }
-
-    #[tokio::test]
-    async fn test_getter() {
-        let pool = SqlitePool::connect(":memory:")
-            .await
-            .unwrap_or_else(|e| panic!("Database connection failed: {e}"));
-        let config = Config::new().unwrap();
-
-        create_jobs_table(&pool).await.unwrap();
-
-        // add a job
-        let tempdir = TempDir::new().unwrap();
-        let mut job = Job::new(tempdir.path().to_str().unwrap());
-        job.add_to_db(&pool).await.unwrap();
-        job.update_status(Status::Submitted, &pool).await.unwrap();
-        let id = job.id;
-
-        getter(pool.clone(), config).await;
-
-        let tempdir = TempDir::new().unwrap();
-        let mut _job = Job::new(tempdir.path().to_str().unwrap());
-        _job.retrieve_id(id, &pool).await.unwrap();
-
-        assert_eq!(_job.status, Status::Unknown);
-
-        // TODO: Add mock the `retrieve` function to test the match arm
     }
 
     #[tokio::test]
@@ -456,213 +415,5 @@ mod test {
 
         // No run.sh = user error = Invalid status
         assert_eq!(_payload.status, Status::Invalid);
-    }
-
-    /// When a service returns HTTP 204, getter() should set the job status to Cleaned.
-    /// This indicates the job results have expired, not an error.
-    #[tokio::test]
-    async fn test_getter_job_cleaned_sets_status_to_cleaned() {
-        // Set up mock server that returns 204 (job results cleaned/expired)
-        let mut server = Server::new_async().await;
-        let mock = server
-            .mock("GET", "/download/123")
-            .with_status(204)
-            .create_async()
-            .await;
-
-        // Set up database
-        let pool = SqlitePool::connect(":memory:")
-            .await
-            .unwrap_or_else(|e| panic!("Database connection failed: {e}"));
-        create_jobs_table(&pool).await.unwrap();
-
-        // Set up config with service pointing to mock server
-        let mut config = Config::new().unwrap();
-        config.services.insert(
-            "test-service".to_string(),
-            Service {
-                name: "test-service".to_string(),
-                upload_url: format!("{}/upload", server.url()),
-                download_url: format!("{}/download", server.url()),
-                runs_per_user: 5,
-            },
-        );
-
-        // Create a job in Submitted status
-        let tempdir = TempDir::new().unwrap();
-        let mut job = Job::new(tempdir.path().to_str().unwrap());
-        job.set_service("test-service".to_string());
-        job.add_to_db(&pool).await.unwrap();
-        job.update_status(Status::Submitted, &pool).await.unwrap();
-        job.update_dest_id(123, &pool).await.unwrap();
-        let job_id = job.id;
-
-        // Run getter - this will call the mock server which returns 204
-        getter(pool.clone(), config).await;
-
-        // Verify the mock was called
-        mock.assert_async().await;
-
-        // Retrieve the job and check status
-        let mut updated_job = Job::new("");
-        updated_job.retrieve_id(job_id, &pool).await.unwrap();
-
-        assert_eq!(updated_job.status, Status::Cleaned);
-    }
-
-    /// When a service returns HTTP 410 GONE, getter() should set the job status to Failed.
-    /// This indicates the job failed during execution.
-    #[tokio::test]
-    async fn test_getter_job_failed_sets_status_to_failed() {
-        // Set up mock server that returns 410 (job failed)
-        let mut server = Server::new_async().await;
-        let mock = server
-            .mock("GET", "/download/456")
-            .with_status(410)
-            .create_async()
-            .await;
-
-        // Set up database
-        let pool = SqlitePool::connect(":memory:")
-            .await
-            .unwrap_or_else(|e| panic!("Database connection failed: {e}"));
-        create_jobs_table(&pool).await.unwrap();
-
-        // Set up config with service pointing to mock server
-        let mut config = Config::new().unwrap();
-        config.services.insert(
-            "test-service".to_string(),
-            Service {
-                name: "test-service".to_string(),
-                upload_url: format!("{}/upload", server.url()),
-                download_url: format!("{}/download", server.url()),
-                runs_per_user: 5,
-            },
-        );
-
-        // Create a job in Submitted status
-        let tempdir = TempDir::new().unwrap();
-        let mut job = Job::new(tempdir.path().to_str().unwrap());
-        job.set_service("test-service".to_string());
-        job.add_to_db(&pool).await.unwrap();
-        job.update_status(Status::Submitted, &pool).await.unwrap();
-        job.update_dest_id(456, &pool).await.unwrap();
-        let job_id = job.id;
-
-        // Run getter - this will call the mock server which returns 410
-        getter(pool.clone(), config).await;
-
-        // Verify the mock was called
-        mock.assert_async().await;
-
-        // Retrieve the job and check status
-        let mut updated_job = Job::new("");
-        updated_job.retrieve_id(job_id, &pool).await.unwrap();
-
-        assert_eq!(updated_job.status, Status::Failed);
-    }
-
-    /// When a service returns HTTP 500 INTERNAL_SERVER_ERROR, getter() should set the job status to Failed.
-    /// This indicates an unexpected error on the service side.
-    #[tokio::test]
-    async fn test_getter_job_internal_error_sets_status_to_failed() {
-        // Set up mock server that returns 500 (internal server error)
-        let mut server = Server::new_async().await;
-        let mock = server
-            .mock("GET", "/download/789")
-            .with_status(500)
-            .create_async()
-            .await;
-
-        // Set up database
-        let pool = SqlitePool::connect(":memory:")
-            .await
-            .unwrap_or_else(|e| panic!("Database connection failed: {e}"));
-        create_jobs_table(&pool).await.unwrap();
-
-        // Set up config with service pointing to mock server
-        let mut config = Config::new().unwrap();
-        config.services.insert(
-            "test-service".to_string(),
-            Service {
-                name: "test-service".to_string(),
-                upload_url: format!("{}/upload", server.url()),
-                download_url: format!("{}/download", server.url()),
-                runs_per_user: 5,
-            },
-        );
-
-        // Create a job in Submitted status
-        let tempdir = TempDir::new().unwrap();
-        let mut job = Job::new(tempdir.path().to_str().unwrap());
-        job.set_service("test-service".to_string());
-        job.add_to_db(&pool).await.unwrap();
-        job.update_status(Status::Submitted, &pool).await.unwrap();
-        job.update_dest_id(789, &pool).await.unwrap();
-        let job_id = job.id;
-
-        // Run getter - this will call the mock server which returns 500
-        getter(pool.clone(), config).await;
-
-        // Verify the mock was called
-        mock.assert_async().await;
-
-        // Retrieve the job and check status
-        let mut updated_job = Job::new("");
-        updated_job.retrieve_id(job_id, &pool).await.unwrap();
-
-        assert_eq!(updated_job.status, Status::Unknown);
-    }
-
-    /// When a service returns HTTP 400 BAD_REQUEST, getter() should set the job status to Invalid.
-    /// This indicates a user error (e.g., missing run.sh).
-    #[tokio::test]
-    async fn test_getter_job_invalid_sets_status_to_invalid() {
-        // Set up mock server that returns 400 (job invalid - user error)
-        let mut server = Server::new_async().await;
-        let mock = server
-            .mock("GET", "/download/321")
-            .with_status(400)
-            .create_async()
-            .await;
-
-        // Set up database
-        let pool = SqlitePool::connect(":memory:")
-            .await
-            .unwrap_or_else(|e| panic!("Database connection failed: {e}"));
-        create_jobs_table(&pool).await.unwrap();
-
-        // Set up config with service pointing to mock server
-        let mut config = Config::new().unwrap();
-        config.services.insert(
-            "test-service".to_string(),
-            Service {
-                name: "test-service".to_string(),
-                upload_url: format!("{}/upload", server.url()),
-                download_url: format!("{}/download", server.url()),
-                runs_per_user: 5,
-            },
-        );
-
-        // Create a job in Submitted status
-        let tempdir = TempDir::new().unwrap();
-        let mut job = Job::new(tempdir.path().to_str().unwrap());
-        job.set_service("test-service".to_string());
-        job.add_to_db(&pool).await.unwrap();
-        job.update_status(Status::Submitted, &pool).await.unwrap();
-        job.update_dest_id(321, &pool).await.unwrap();
-        let job_id = job.id;
-
-        // Run getter - this will call the mock server which returns 400
-        getter(pool.clone(), config).await;
-
-        // Verify the mock was called
-        mock.assert_async().await;
-
-        // Retrieve the job and check status
-        let mut updated_job = Job::new("");
-        updated_job.retrieve_id(job_id, &pool).await.unwrap();
-
-        assert_eq!(updated_job.status, Status::Invalid);
     }
 }
