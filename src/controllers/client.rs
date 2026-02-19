@@ -16,9 +16,7 @@ use sysinfo::System;
     ),
     responses(
         (status = 200, description = "File uploaded successfully", body = Payload),
-        // (status = 400, description = "Bad request"),
         (status = 500, description = "Internal server error"),
-        // (status = 503, description = "Service unavailable")
     ),
     tag = "files"
 )]
@@ -74,8 +72,9 @@ pub async fn submit(
     ),
     responses(
         (status = 200, description = "File downloaded successfully", body = Vec<u8>),
-        (status = 202, description = "Job not ready"),
-        (status = 204, description = "Job failed or cleaned"),
+        (status = 201, description = "Job is queued"), // QUEUED == CREATED
+        (status = 202, description = "Job is running"), // RUNNING == ACCEPTED
+        (status = 204, description = "Job results cleaned up"),
         (status = 404, description = "Job not found"),
         (status = 500, description = "Internal server error")
     ),
@@ -100,10 +99,7 @@ pub async fn retrieve(
                 Err(StatusCode::INTERNAL_SERVER_ERROR)
             }
         },
-        Status::Invalid => Err(StatusCode::BAD_REQUEST),
-        Status::Failed => Err(StatusCode::INTERNAL_SERVER_ERROR),
-        Status::Cleaned => Err(StatusCode::NO_CONTENT),
-        _ => Err(StatusCode::ACCEPTED),
+        _ => Err(payload.status.as_http_code()),
     }
 }
 
@@ -348,7 +344,7 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn test_retrieve_failed_returns_internal_server_error() {
+    async fn test_retrieve_failed_returns_gone() {
         let (test_app, _, failed_jobid, _tempdir) =
             setup_retrieve_test_router("/retrieve/{id}").await;
         let endpoint = format!("/retrieve/{}", failed_jobid);
@@ -359,10 +355,10 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        // Failed status (system error) returns 500 Internal Server Error
+        // Failed status (system error) returns GONE
         assert_eq!(
             test_app.oneshot(req).await.unwrap().status(),
-            StatusCode::INTERNAL_SERVER_ERROR
+            StatusCode::GONE
         );
     }
 
@@ -523,42 +519,6 @@ mod tests {
     // ===== Additional retrieve tests =====
 
     #[tokio::test]
-    async fn test_retrieve_pending_status() {
-        let data_dir = tempdir().unwrap();
-        let mut config = Config::new().unwrap();
-        config.data_path = data_dir.path().to_str().unwrap().to_string();
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        init_db(&pool).await.unwrap();
-        let state = AppState {
-            pool: pool.clone(),
-            config: config.clone(),
-        };
-
-        let mut payload = Payload::new();
-        payload
-            .prepare(&state.config.data_path)
-            .expect("Failed to prepare");
-        payload.add_to_db(&pool).await.expect("Failed to add to db");
-        payload
-            .update_status(Status::Pending, &pool)
-            .await
-            .expect("Failed to update status");
-
-        let app = Router::new()
-            .route("/retrieve/{id}", get(retrieve))
-            .with_state(state);
-
-        let req = Request::builder()
-            .method("GET")
-            .uri(format!("/retrieve/{}", payload.id))
-            .body(Body::empty())
-            .unwrap();
-
-        let response = app.oneshot(req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::ACCEPTED);
-    }
-
-    #[tokio::test]
     async fn test_retrieve_processing_status() {
         let data_dir = tempdir().unwrap();
         let mut config = Config::new().unwrap();
@@ -591,7 +551,7 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        assert_eq!(response.status(), StatusCode::CREATED);
     }
 
     #[tokio::test]
@@ -663,6 +623,6 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        assert_eq!(response.status(), StatusCode::CREATED);
     }
 }

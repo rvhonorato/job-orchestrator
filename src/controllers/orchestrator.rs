@@ -17,13 +17,14 @@ use utoipa;
         ("id" = i32, Path, description = "Job identifier")
     ),
     responses(
-        (status = 200, description = "Job completed, downloading results", body = Vec<u8>),
-        (status = 202, description = "Job still processing"),
-        (status = 204, description = "Job results cleaned up (expired)"),
-        (status = 400, description = "Job invalid (user error)"),
-        (status = 404, description = "Job not found"),
-        (status = 410, description = "Job failed"),
-        (status = 500, description = "Internal server error or unknown state")
+        (status = 200, description = "Job completed, downloading results", body = Vec<u8>), // OK
+        (status = 202, description = "Job is running"), // RUNNING == ACCEPTED
+        (status = 204, description = "Job results cleaned up (expired)"), // NO_CONTENT
+        (status = 201, description = "Job is queued"), // QUEUED == CREATED
+        (status = 400, description = "Job invalid (user error)"), // BAD_REQUEST
+        (status = 404, description = "Job not found"), // NOT_FOUND
+        (status = 410, description = "Job failed"), // GONE
+        (status = 500, description = "Internal server error or unknown state"), // INTERNAL_SERVER_ERROR
     ),
     tag = "files"
 )]
@@ -42,15 +43,7 @@ pub async fn download(
 
     match job.status {
         Status::Completed => Ok(job.download()),
-        Status::Cleaned => Err(StatusCode::NO_CONTENT),
-        Status::Failed => Err(StatusCode::GONE),
-        Status::Invalid => Err(StatusCode::BAD_REQUEST),
-        Status::Unknown => Err(StatusCode::INTERNAL_SERVER_ERROR),
-        Status::Pending
-        | Status::Processing
-        | Status::Queued
-        | Status::Submitted
-        | Status::Prepared => Err(StatusCode::ACCEPTED),
+        _ => Err(job.status.as_http_code()),
     }
 }
 
@@ -409,6 +402,60 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn test_download_queued_job() {
+        let config = Config::new().unwrap();
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap(); // Mock database connection;
+        init_db(&pool).await.unwrap(); // Initialize the database schema
+
+        // Make a completed job
+        let data_dir = tempdir().unwrap();
+        let mut job = Job::new(data_dir.path().to_str().unwrap());
+        fs::create_dir(&job.loc).unwrap(); // Create data directory
+        let dummy_file_path = job.loc.join("output.zip");
+        let mut file = fs::File::create(&dummy_file_path).unwrap();
+        writeln!(file, "dummy data").unwrap(); // Create a dummy file
+                                               //
+        job.add_to_db(&pool).await.unwrap(); // Add job to the database;
+        job.update_status(Status::Queued, &pool).await.unwrap(); // Update job status to Failed;
+
+        let state = State(AppState { pool, config }); // Mock state for testing
+        let path = Path(job.id);
+
+        let response = download(state, path).await;
+        match response {
+            Ok(_) => {}
+            Err(e) => assert_eq!(e, StatusCode::CREATED),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_download_running_job() {
+        let config = Config::new().unwrap();
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap(); // Mock database connection;
+        init_db(&pool).await.unwrap(); // Initialize the database schema
+
+        // Make a completed job
+        let data_dir = tempdir().unwrap();
+        let mut job = Job::new(data_dir.path().to_str().unwrap());
+        fs::create_dir(&job.loc).unwrap(); // Create data directory
+        let dummy_file_path = job.loc.join("output.zip");
+        let mut file = fs::File::create(&dummy_file_path).unwrap();
+        writeln!(file, "dummy data").unwrap(); // Create a dummy file
+                                               //
+        job.add_to_db(&pool).await.unwrap(); // Add job to the database;
+        job.update_status(Status::Running, &pool).await.unwrap(); // Update job status to Failed;
+
+        let state = State(AppState { pool, config }); // Mock state for testing
+        let path = Path(job.id);
+
+        let response = download(state, path).await;
+        match response {
+            Ok(_) => {}
+            Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
+        }
+    }
+
     /// Failed jobs should return 410 GONE to indicate the resource permanently failed.
     /// This distinguishes from Cleaned (204) which is a normal lifecycle state.
     #[tokio::test]
@@ -494,7 +541,7 @@ mod tests {
 
         match download(state, path).await {
             Ok(_) => {}
-            Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
+            Err(e) => assert_eq!(e, StatusCode::CREATED),
         }
     }
 
@@ -749,24 +796,6 @@ mod tests {
     // ===== Additional download status tests =====
 
     #[tokio::test]
-    async fn test_download_pending_job() {
-        let config = Config::new().unwrap();
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        init_db(&pool).await.unwrap();
-        let mut job = Job::new("");
-        job.add_to_db(&pool).await.unwrap();
-        job.update_status(Status::Pending, &pool).await.unwrap();
-
-        let state = State(AppState { pool, config });
-        let path = Path(job.id);
-
-        match download(state, path).await {
-            Ok(_) => panic!("Expected error"),
-            Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
-        }
-    }
-
-    #[tokio::test]
     async fn test_download_processing_job() {
         let config = Config::new().unwrap();
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -780,7 +809,7 @@ mod tests {
 
         match download(state, path).await {
             Ok(_) => panic!("Expected error"),
-            Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
+            Err(e) => assert_eq!(e, StatusCode::CREATED),
         }
     }
 
@@ -799,6 +828,24 @@ mod tests {
         match download(state, path).await {
             Ok(_) => panic!("Expected error"),
             Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_download_prepared_job() {
+        let config = Config::new().unwrap();
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        let mut job = Job::new("");
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Prepared, &pool).await.unwrap();
+
+        let state = State(AppState { pool, config });
+        let path = Path(job.id);
+
+        match download(state, path).await {
+            Ok(_) => panic!("Expected error"),
+            Err(e) => assert_eq!(e, StatusCode::CREATED),
         }
     }
 

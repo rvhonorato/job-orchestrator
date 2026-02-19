@@ -8,13 +8,17 @@ use std::collections::HashMap;
 impl Queue<'_> {
     pub async fn list_per_status(
         &mut self,
-        status: Status,
+        statuses: Vec<Status>,
         pool: &SqlitePool,
     ) -> Result<(), sqlx::Error> {
-        let rows = sqlx::query("SELECT * FROM jobs WHERE status = ?")
-            .bind(status.to_string())
-            .fetch_all(pool)
-            .await?;
+        let mut qb = sqlx::QueryBuilder::new("SELECT * FROM jobs WHERE status IN (");
+        let mut sep = qb.separated(", ");
+        for s in &statuses {
+            sep.push_bind(s.to_string());
+        }
+        qb.push(")");
+
+        let rows = qb.build().fetch_all(pool).await?;
 
         let jobs: Vec<Job> = rows
             .into_iter()
