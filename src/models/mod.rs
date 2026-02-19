@@ -1,3 +1,4 @@
+pub mod body_dao;
 pub mod health_dto;
 pub mod job_dao;
 pub mod job_dto;
