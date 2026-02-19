@@ -5,15 +5,14 @@ use crate::config::loader::Config;
 use crate::models::job_dao::Job;
 use crate::models::queue_dao::PayloadQueue;
 use crate::models::{queue_dao::Queue, status_dto::Status};
-use crate::services::client::{execute_payload, Client};
+use crate::services::client::{Client, execute_payload};
 use crate::services::orchestrator;
 use futures::stream::{self, StreamExt};
 use sqlx::SqlitePool;
 use tracing::info;
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 use super::client::ClientError;
-use super::orchestrator::DownloadError;
 
 pub async fn cleaner(pool: SqlitePool, config: Config) {
     // List all directories inside the config.data_path
@@ -124,47 +123,17 @@ pub async fn getter(pool: SqlitePool, config: Config) {
             let config = config.clone();
             async move {
                 match orchestrator::retrieve(&j, &config, Client).await {
-                    Ok(_) => {
-                        if let Err(e) = j.update_status(Status::Completed, &pool).await {
-                            error!("Failed to update job {} to Completed: {:?}", j.id, e);
-                        } else {
-                            info!("Job {} completed successfully", j.id);
+                    Ok(s) => {
+                        if let Err(e) = j.update_status(s.clone(), &pool).await {
+                            error!("Failed to update status of job {} to {}: {:?}", j.id, s, e);
                         }
                     }
-                    Err(DownloadError::JobRunning) => {
-                        info!("Job {} is running in the client", j.id);
-                        j.update_status(Status::Running, &pool).await.ok();
-                    }
-                    Err(DownloadError::JobNotReady) => {
-                        debug!(
-                            "Job {} has been submitted and is queued in the client",
-                            j.id
-                        );
-                        // No action!!
-                    }
-                    Err(DownloadError::JobNotFound) => {
-                        warn!("Job {} not found on server", j.id);
-                        j.update_status(Status::Unknown, &pool).await.ok();
-                    }
-                    Err(DownloadError::JobCleaned) => {
-                        info!("Job {} was cleaned (results expired)", j.id);
-                        j.update_status(Status::Cleaned, &pool).await.ok();
-                    }
-                    Err(DownloadError::JobFailed) => {
-                        warn!("Job {} failed during execution", j.id);
-                        j.update_status(Status::Failed, &pool).await.ok();
-                    }
-                    Err(DownloadError::JobInvalid) => {
-                        warn!("Job {} invalid (user error)", j.id);
-                        j.update_status(Status::Invalid, &pool).await.ok();
-                    }
-                    Err(DownloadError::JobCouldNotBeExecuted) => {
-                        error!("Job {} could not be executed", j.id);
-                        j.update_status(Status::Unknown, &pool).await.ok();
-                    }
                     Err(e) => {
-                        error!("Failed to download job {}: {:?}", j.id, e);
-                        j.update_status(Status::Unknown, &pool).await.ok();
+                        // There was some error while trying to download the results from the client, handle them here
+                        error!("There was some error while trying to retrieve job {0} from the client: {e}", j.id);
+                        if let Err(e) = j.update_status(Status::Failed, &pool).await {
+                            error!("Failed to update status of job {} to Failed: {:?}", j.id, e);
+                        }
                     }
                 }
             }
