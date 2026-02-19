@@ -43,12 +43,7 @@ pub async fn download(
 
     match job.status {
         Status::Completed => Ok(job.download()),
-        Status::Cleaned => Err(StatusCode::NO_CONTENT),
-        Status::Failed => Err(StatusCode::GONE),
-        Status::Invalid => Err(StatusCode::BAD_REQUEST),
-        Status::Unknown => Err(StatusCode::INTERNAL_SERVER_ERROR),
-        Status::Submitted | Status::Running => Err(StatusCode::ACCEPTED),
-        Status::Processing | Status::Queued | Status::Prepared => Err(StatusCode::CREATED),
+        _ => Err(job.status.as_http_code()),
     }
 }
 

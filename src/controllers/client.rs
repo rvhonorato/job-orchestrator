@@ -99,13 +99,7 @@ pub async fn retrieve(
                 Err(StatusCode::INTERNAL_SERVER_ERROR)
             }
         },
-        Status::Invalid => Err(StatusCode::BAD_REQUEST),
-        Status::Failed => Err(StatusCode::INTERNAL_SERVER_ERROR),
-        Status::Cleaned => Err(StatusCode::NO_CONTENT),
-        Status::Queued => Err(StatusCode::CREATED),
-        Status::Running => Err(StatusCode::ACCEPTED),
-        // Catch all
-        _ => Err(StatusCode::CREATED),
+        _ => Err(payload.status.as_http_code()),
     }
 }
 
@@ -350,7 +344,7 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn test_retrieve_failed_returns_internal_server_error() {
+    async fn test_retrieve_failed_returns_gone() {
         let (test_app, _, failed_jobid, _tempdir) =
             setup_retrieve_test_router("/retrieve/{id}").await;
         let endpoint = format!("/retrieve/{}", failed_jobid);
@@ -361,10 +355,10 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        // Failed status (system error) returns 500 Internal Server Error
+        // Failed status (system error) returns GONE
         assert_eq!(
             test_app.oneshot(req).await.unwrap().status(),
-            StatusCode::INTERNAL_SERVER_ERROR
+            StatusCode::GONE
         );
     }
 

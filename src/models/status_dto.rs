@@ -1,3 +1,4 @@
+use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use utoipa::ToSchema;
@@ -50,6 +51,33 @@ impl Status {
             _ => Status::Unknown,
         }
     }
+
+    pub fn as_http_code(&self) -> http::StatusCode {
+        match self {
+            Status::Cleaned => StatusCode::NO_CONTENT,
+            Status::Failed => StatusCode::GONE,
+            Status::Invalid => StatusCode::BAD_REQUEST,
+            Status::Unknown => StatusCode::INTERNAL_SERVER_ERROR,
+            Status::Submitted | Status::Running => StatusCode::ACCEPTED,
+            Status::Processing | Status::Queued | Status::Prepared => StatusCode::CREATED,
+            Status::Completed => StatusCode::NOT_IMPLEMENTED,
+        }
+    }
+
+    // pub fn description(&self) -> &'static str {
+    //     match self {
+    //         Status::Queued => "Job received in the server",
+    //         Status::Processing => "Job is being sent to the client",
+    //         Status::Submitted => "Job was sent to the client",
+    //         Status::Prepared => "Ready to be executed in the client",
+    //         Status::Running => "Running in the client",
+    //         Status::Cleaned => "Job has been cleaned",
+    //         Status::Completed => "Job complete",
+    //         Status::Failed => "Job failed",
+    //         Status::Invalid => "Job invalid",
+    //         Status::Unknown => "Wildcard",
+    //     }
+    // }
 }
 
 #[cfg(test)]
