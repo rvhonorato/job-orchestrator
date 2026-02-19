@@ -5,8 +5,8 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
-use zip::write::FileOptions;
 use zip::ZipWriter;
+use zip::write::FileOptions;
 
 /// Sanitize filename to prevent path traversal attacks
 pub fn sanitize_filename(filename: &str) -> String {
