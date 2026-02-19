@@ -128,6 +128,12 @@ impl Endpoint for Client {
 
         let status = response.status();
 
+        // NOTE: This is the main point where we define what happened with the execution
+        // The client will return a HTTP status code, and we then convert it to a `DownloadError`
+        // and the `DownloadError` is then converted back into an internal Status by the
+        // `getter` task
+        //
+        // FIXME: Do we really need this `DownloadError` or can this be simplified?
         match status {
             StatusCode::OK => {
                 let output_path = j.loc.join("output.zip");
@@ -803,7 +809,7 @@ mod test {
 
         mock.assert_async().await;
         assert!(result.is_err());
-        assert!(matches!(result, Err(DownloadError::JobNotReady)));
+        assert!(matches!(result, Err(DownloadError::JobRunning)));
     }
 
     #[tokio::test]
