@@ -73,8 +73,8 @@ pub async fn submit(
     responses(
         (status = 200, description = "File downloaded successfully", body = Vec<u8>),
         (status = 201, description = "Job is queued"), // QUEUED == CREATED
-        (status = 202, description = "Job not ready"), // RUNNING == ACCEPTED
-        (status = 204, description = "Job failed or cleaned"),
+        (status = 202, description = "Job is running"), // RUNNING == ACCEPTED
+        (status = 204, description = "Job results cleaned up"),
         (status = 404, description = "Job not found"),
         (status = 500, description = "Internal server error")
     ),

@@ -7,7 +7,7 @@ use utoipa::ToSchema;
 // used in the client and some only in the server and some used in both
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub enum Status {
-    Queued,     // Job recieved in the server
+    Queued,     // Job recived in the server
     Processing, // Job is being sent to the client
     Submitted,  // Job was sent to the client
     Prepared,   // Ready to be executed in the client
@@ -54,13 +54,13 @@ impl Status {
 
     pub fn as_http_code(&self) -> http::StatusCode {
         match self {
+            Status::Completed => StatusCode::OK,
             Status::Cleaned => StatusCode::NO_CONTENT,
             Status::Failed => StatusCode::GONE,
             Status::Invalid => StatusCode::BAD_REQUEST,
             Status::Unknown => StatusCode::INTERNAL_SERVER_ERROR,
             Status::Submitted | Status::Running => StatusCode::ACCEPTED,
             Status::Processing | Status::Queued | Status::Prepared => StatusCode::CREATED,
-            Status::Completed => StatusCode::NOT_IMPLEMENTED,
         }
     }
 

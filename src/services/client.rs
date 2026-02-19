@@ -164,7 +164,6 @@ impl Endpoint for Client {
             }
             StatusCode::ACCEPTED => Err(DownloadError::JobRunning),
             StatusCode::CREATED => Err(DownloadError::JobNotReady),
-            StatusCode::PROCESSING => Err(DownloadError::JobRunning),
             StatusCode::NO_CONTENT => Err(DownloadError::JobCleaned),
             StatusCode::BAD_REQUEST => Err(DownloadError::JobInvalid),
             StatusCode::NOT_FOUND => Err(DownloadError::JobNotFound),
