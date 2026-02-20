@@ -168,16 +168,21 @@ impl Endpoint for Client {
 
             // All good, file saved
             Ok(Status::Completed)
-        } else {
+        } else if status.is_success() {
             // Job not yet finished, propagate the status
             let payload: Payload = match response.json().await {
                 Ok(p) => p,
                 Err(e) => {
-                    // We could not make a request to the client
-                    return Err(DownloadError::RequestFailed(e));
+                    return Err(DownloadError::ResponseReadFailed(e));
                 }
             };
             Ok(payload.status)
+        } else {
+            // Client returned an error
+            tracing::error!("Client returned error status: {status}");
+            Err(DownloadError::RequestFailed(
+                response.error_for_status().unwrap_err(),
+            ))
         }
     }
 }

@@ -9,12 +9,18 @@ pub struct StatusBody {
     pub message: String,
 }
 
-impl StatusBody {
-    pub fn new() -> Self {
+impl Default for StatusBody {
+    fn default() -> Self {
         StatusBody {
             id: 0,
             status: Status::Unknown,
             message: String::new(),
         }
+    }
+}
+
+impl StatusBody {
+    pub fn new() -> Self {
+        Self::default()
     }
 }

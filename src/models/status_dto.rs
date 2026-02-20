@@ -4,7 +4,7 @@ use utoipa::ToSchema;
 
 // TODO: These statuses are a bit confusing, some of them are just
 // used in the client and some only in the server and some used in both
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, Copy)]
 pub enum Status {
     Queued,     // Job recived in the server
     Processing, // Job is being sent to the client

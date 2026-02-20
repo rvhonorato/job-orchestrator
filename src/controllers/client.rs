@@ -24,11 +24,24 @@ pub async fn submit(State(state): State<AppState>, mut multipart: Multipart) -> 
     let mut payload = Payload::new();
 
     // Parse the multipart form data
-    while let Some(field) = multipart.next_field().await.unwrap() {
+    loop {
+        let field = match multipart.next_field().await {
+            Ok(Some(f)) => f,
+            Ok(None) => break,
+            Err(e) => {
+                tracing::error!("Multipart error: {e}");
+                return (StatusCode::BAD_REQUEST, Json(payload)).into_response();
+            }
+        };
         if let Some(filename) = field.file_name() {
             let clean_filename = sanitize_filename(filename);
-            let data = field.bytes().await.unwrap();
-
+            let data = match field.bytes().await {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::error!("Error reading field bytes: {e}");
+                    return (StatusCode::BAD_REQUEST, Json(payload)).into_response();
+                }
+            };
             payload.add_input(clean_filename, data.to_vec());
         }
     }

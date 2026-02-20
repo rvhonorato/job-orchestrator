@@ -5,7 +5,7 @@ use crate::config::loader::Config;
 use crate::models::job_dao::Job;
 use crate::models::queue_dao::PayloadQueue;
 use crate::models::{queue_dao::Queue, status_dto::Status};
-use crate::services::client::{Client, execute_payload};
+use crate::services::client::{Client, ClientError, execute_payload};
 use crate::services::orchestrator;
 use futures::stream::{self, StreamExt};
 use sqlx::SqlitePool;
@@ -123,16 +123,18 @@ pub async fn getter(pool: SqlitePool, config: Config) {
             async move {
                 match orchestrator::retrieve(&j, &config, Client).await {
                     Ok(s) => {
-                        if let Err(e) = j.update_status(s.clone(), &pool).await {
+                        if let Err(e) = j.update_status(s, &pool).await {
                             error!("Failed to update status of job {} to {}: {:?}", j.id, s, e);
                         }
                     }
                     Err(e) => {
-                        // There was some error while trying to download the results from the client, handle them here
-                        error!("There was some error while trying to retrieve job {0} from the client: {e}", j.id);
-                        if let Err(e) = j.update_status(Status::Failed, &pool).await {
-                            error!("Failed to update status of job {} to Failed: {:?}", j.id, e);
-                        }
+                        // Log the error but leave the job status unchanged to avoid
+                        // incorrectly marking transient conditions (e.g., job still
+                        // running) as permanently failed.
+                        error!(
+                            "There was some error while trying to retrieve job {0} from the client: {e}",
+                            j.id
+                        );
                     }
                 }
             }
@@ -162,9 +164,14 @@ pub async fn runner(pool: SqlitePool, config: Config) {
                             j.update_status(s, &pool_clone).await.ok();
                         }
                         Err(e) => {
-                            // TODO: Add some specific handlers for each of the errors
                             error!("There was an error while executing the payload: {e}");
-                            j.update_status(Status::Invalid, &pool_clone).await.ok();
+                            let status = match e {
+                                ClientError::NoExecScript | ClientError::UnsafeScript { .. } => {
+                                    Status::Invalid
+                                }
+                                ClientError::Execution => Status::Failed,
+                            };
+                            j.update_status(status, &pool_clone).await.ok();
                         }
                     }
                 })

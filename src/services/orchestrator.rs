@@ -78,11 +78,8 @@ where
     }
 }
 
-// pub async fn status() {}
-
-// These are traits that all Desinations need to have
+// These are traits that all Destinations need to have
 pub trait Endpoint {
     async fn upload(&self, j: &Job, url: &str) -> Result<u32, UploadError>;
-    // async fn status(&self, j: &Job) -> Result<reqwest::Response, reqwest::Error>;
     async fn download(&self, j: &Job, url: &str) -> Result<Status, DownloadError>;
 }

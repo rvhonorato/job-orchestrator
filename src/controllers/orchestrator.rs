@@ -1,5 +1,5 @@
-use crate::models::status_body::StatusBody;
 use crate::models::job_dao::Job;
+use crate::models::status_body::StatusBody;
 use crate::models::status_dto::Status;
 use crate::routes::router::AppState;
 use crate::utils::io::{sanitize_filename, save_file};
@@ -52,7 +52,7 @@ pub async fn download(State(state): State<AppState>, Path(id): Path<i32>) -> Res
     }
 
     body.id = job.id;
-    body.status = job.status.clone(); // FIXME: This clone
+    body.status = job.status;
 
     match job.status {
         Status::Completed => match job.download() {
@@ -77,7 +77,7 @@ pub async fn download(State(state): State<AppState>, Path(id): Path<i32>) -> Res
         Additional fields may be included as needed."
     ),
     responses(
-        (status = 200, description = "File uploaded successfully", body = StatusBody),
+        (status = 201, description = "File uploaded successfully", body = StatusBody),
         (status = 400, description = "Bad request"),
         (status = 500, description = "Internal server error"),
     ),
