@@ -88,7 +88,7 @@ pub async fn upload(State(state): State<AppState>, mut multipart: Multipart) -> 
     let mut job = Job::new(&state.config.data_path);
 
     // Create job directory
-    if let Err(_) = create_dir_all(&job.loc).await {
+    if create_dir_all(&job.loc).await.is_err() {
         let mut body = StatusBody::new();
         body.message = "Could not create job directory".to_string();
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response();
