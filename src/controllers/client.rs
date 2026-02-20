@@ -33,6 +33,8 @@ pub async fn submit(State(state): State<AppState>, mut multipart: Multipart) -> 
         }
     }
     // Add job to database
+    // TODO: These error responses return empty payloads with no diagnostic info.
+    //  They are indicators of an unhealthy client — handle in a future PR.
     let Ok(_) = payload.add_to_db(&state.pool).await else {
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(payload)).into_response();
     };
@@ -72,6 +74,7 @@ pub async fn submit(State(state): State<AppState>, mut multipart: Multipart) -> 
 pub async fn retrieve(State(state): State<AppState>, Path(id): Path<u32>) -> Response {
     let payload = match Payload::retrieve_id(id, &state.pool).await {
         Ok(p) => p,
+        // TODO: Empty payload responses are indicators of an unhealthy client — handle in a future PR.
         Err(e) => {
             let status = match e {
                 sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
@@ -84,6 +87,7 @@ pub async fn retrieve(State(state): State<AppState>, Path(id): Path<u32>) -> Res
     match payload.status {
         Status::Completed => match payload.zip_directory() {
             Ok(v) => ([(header::CONTENT_TYPE, "application/zip")], v).into_response(),
+            // TODO: Empty payload response is an indicator of an unhealthy client — handle in a future PR.
             Err(e) => {
                 tracing::error!("Error compressing directory {:?}", e);
                 (StatusCode::INTERNAL_SERVER_ERROR, Json(Payload::new())).into_response()
