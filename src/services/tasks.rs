@@ -262,6 +262,7 @@ mod test {
                 upload_url: format!("{}/submit", server.url()),
                 download_url: format!("{}/retrieve", server.url()),
                 runs_per_user: 5,
+                max_runs: u16::MAX,
             },
         );
 
@@ -296,6 +297,7 @@ mod test {
                 upload_url: "http://example.com/upload_a".to_string(),
                 download_url: "http://example.com/download_a".to_string(),
                 runs_per_user: 5,
+                max_runs: u16::MAX,
             },
         );
 

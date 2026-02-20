@@ -20,6 +20,7 @@ pub struct Service {
     pub upload_url: String,
     pub download_url: String,
     pub runs_per_user: u16,
+    pub max_runs: u16,
 }
 
 impl Config {
@@ -46,6 +47,7 @@ impl Config {
                             upload_url: String::new(),
                             download_url: String::new(),
                             runs_per_user: 5, // by default consider 5 runs per user per service
+                            max_runs: 100,    // by default allow up to 100 concurrent runs per service
                         });
 
                     // Assign the corresponding vars to the config
@@ -53,6 +55,7 @@ impl Config {
                         "UPLOAD_URL" => service.upload_url = value,
                         "DOWNLOAD_URL" => service.download_url = value,
                         "RUNS_PER_USER" => service.runs_per_user = value.parse::<u16>().unwrap(),
+                        "MAX_RUNS" => service.max_runs = value.parse::<u16>().unwrap(),
                         _ => continue,
                     };
                 }
@@ -141,6 +144,7 @@ mod tests {
                 upload_url: "http://test.com/upload".to_string(),
                 download_url: "http://test.com/download".to_string(),
                 runs_per_user: 10,
+                max_runs: u16::MAX,
             },
         );
 
@@ -162,6 +166,7 @@ mod tests {
             upload_url: "http://example.com/upload".to_string(),
             download_url: "http://example.com/download".to_string(),
             runs_per_user: 5,
+            max_runs: u16::MAX,
         };
 
         assert_eq!(service.name, "test");
@@ -245,6 +250,7 @@ mod tests {
                 upload_url: "http://s1.com/upload".to_string(),
                 download_url: "http://s1.com/download".to_string(),
                 runs_per_user: 5,
+                max_runs: u16::MAX,
             },
         );
 
@@ -255,6 +261,7 @@ mod tests {
                 upload_url: "http://s2.com/upload".to_string(),
                 download_url: "http://s2.com/download".to_string(),
                 runs_per_user: 10,
+                max_runs: u16::MAX,
             },
         );
 
@@ -399,5 +406,23 @@ mod tests {
             "Service name should be lowercased: got keys {:?}",
             config.services.keys().collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_new_custom_max_runs() {
+        // SAFETY: serial test — no concurrent env mutation
+        unsafe {
+            env::set_var("SERVICE_FOO_UPLOAD_URL", "http://foo.com/upload");
+            env::set_var("SERVICE_FOO_MAX_RUNS", "50");
+        }
+        let config = Config::new().unwrap();
+        cleanup_env(&["SERVICE_FOO_UPLOAD_URL", "SERVICE_FOO_MAX_RUNS"]);
+
+        let service = config
+            .services
+            .get("foo")
+            .expect("Service 'foo' should be present");
+        assert_eq!(service.max_runs, 50);
     }
 }

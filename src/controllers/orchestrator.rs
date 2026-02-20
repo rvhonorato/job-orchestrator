@@ -228,6 +228,7 @@ mod tests {
                 upload_url: "http://example.com/upload".to_string(),
                 download_url: "http://example.com/download".to_string(),
                 runs_per_user: 5,
+                max_runs: u16::MAX,
             },
         );
         Config {
