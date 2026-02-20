@@ -44,11 +44,8 @@ You'll receive a response like:
 ```json
 {
   "id": 1,
-  "user_id": 1,
-  "service": "example",
   "status": "Queued",
-  "loc": "/opt/data/978e5a14-dc94-46ab-9507-fe0a94d688b8",
-  "dest_id": ""
+  "message": "Job successfully uploaded"
 }
 ```
 
@@ -56,27 +53,27 @@ Note the `id` field - you'll need this to check status and download results.
 
 ## Checking Job Status
 
-Use HTTP HEAD to check status without downloading:
+Check the job status via GET request:
 
 ```bash
-curl -I http://localhost:5000/download/1
+curl http://localhost:5000/download/1
 ```
 
-### Status Codes
+If the job is not yet completed, you'll get a JSON response:
 
-| Code | Meaning |
-|------|---------|
-| `200` | Job completed, ready to download |
-| `202` | Job queued or still running |
-| `204` | Job cleaned up (expired) |
-| `400` | Job invalid (user error in job) |
-| `404` | Job not found |
-| `410` | Job failed permanently |
-| `500` | Internal server error |
+```json
+{
+  "id": 1,
+  "status": "Submitted",
+  "message": ""
+}
+```
+
+The `status` field will be one of: `Queued`, `Processing`, `Submitted`, `Running`, `Completed`, `Failed`, `Invalid`, `Cleaned`, or `Unknown`.
 
 ## Downloading Results
 
-Once you see status `200`, download the results:
+Once the status is `Completed`, the same endpoint returns the ZIP file:
 
 ```bash
 curl -o results.zip http://localhost:5000/download/1

@@ -75,6 +75,18 @@ curl -o results.zip http://localhost:9000/retrieve/1
 
 **Response**
 
+When the payload is **not yet completed**, returns a JSON body:
+
+```json
+{
+  "id": 1,
+  "status": "Running",
+  "loc": "/opt/data/abc123-def456"
+}
+```
+
+When the payload is **completed**, returns:
+
 - Content-Type: `application/zip`
 - Body: ZIP archive of all files in the payload directory
 
@@ -82,12 +94,8 @@ curl -o results.zip http://localhost:9000/retrieve/1
 
 | Code | Description |
 |------|-------------|
-| `200` | Payload completed, returns ZIP |
-| `202` | Payload still processing |
-| `204` | Payload cleaned up |
-| `400` | Payload invalid |
+| `200` | JSON payload status or ZIP file (check `Content-Type`) |
 | `404` | Payload not found |
-| `410` | Payload failed |
 | `500` | Server error |
 
 **Notes**

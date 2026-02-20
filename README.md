@@ -46,8 +46,10 @@ curl -X POST http://localhost:5000/upload \
   -F "user_id=1" \
   -F "service=example"
 
-# Check status / Download results
-curl -I http://localhost:5000/download/1
+# Check status (returns JSON with job state)
+curl http://localhost:5000/download/1
+
+# Download results (when status is "Completed", returns zip)
 curl -o results.zip http://localhost:5000/download/1
 ```
 

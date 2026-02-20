@@ -48,11 +48,8 @@ curl -X POST http://localhost:5000/upload \
 ```json
 {
   "id": 1,
-  "user_id": 1,
-  "service": "example",
   "status": "Queued",
-  "loc": "/opt/data/978e5a14-dc94-46ab-9507-fe0a94d688b8",
-  "dest_id": ""
+  "message": "Job successfully uploaded"
 }
 ```
 
@@ -60,7 +57,7 @@ curl -X POST http://localhost:5000/upload \
 
 | Code | Description |
 |------|-------------|
-| `200` | Job created successfully |
+| `201` | Job created successfully |
 | `400` | Invalid request (missing fields, invalid service) |
 | `500` | Server error |
 
@@ -74,7 +71,7 @@ curl -X POST http://localhost:5000/upload \
 
 ### GET /download/{id}
 
-Download the results of a completed job.
+Check job status or download results.
 
 **Parameters**
 
@@ -85,10 +82,26 @@ Download the results of a completed job.
 **Example**
 
 ```bash
+# Check status (returns JSON when not completed)
+curl http://localhost:5000/download/1
+
+# Download results (returns ZIP when completed)
 curl -o results.zip http://localhost:5000/download/1
 ```
 
 **Response**
+
+When the job is **not yet completed**, returns a JSON body:
+
+```json
+{
+  "id": 1,
+  "status": "Submitted",
+  "message": ""
+}
+```
+
+When the job is **completed**, returns:
 
 - Content-Type: `application/zip`
 - Body: ZIP archive containing all result files
@@ -97,61 +110,28 @@ curl -o results.zip http://localhost:5000/download/1
 
 | Code | Description |
 |------|-------------|
-| `200` | Job completed, returns ZIP file |
-| `202` | Job queued or still running |
-| `204` | Job cleaned up (results expired) |
-| `400` | Job invalid (user error in job) |
+| `200` | JSON status body or ZIP file (check `Content-Type`) |
 | `404` | Job not found |
-| `410` | Job failed permanently |
 | `500` | Server error |
-
----
-
-### HEAD /download/{id}
-
-Check job status without downloading results.
-
-**Parameters**
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `id` | integer | Job ID |
-
-**Example**
-
-```bash
-curl -I http://localhost:5000/download/1
-```
-
-**Response**
-
-Returns only headers, no body. Check the HTTP status code:
-
-| Code | Meaning |
-|------|---------|
-| `200` | Ready to download |
-| `202` | Still processing |
-| `204` | Cleaned up |
-| `400` | Invalid |
-| `404` | Not found |
-| `410` | Failed |
 
 **Usage Pattern**
 
-Poll until status is `200`, then download:
+Poll until status is `Completed`, then save the ZIP:
 
 ```bash
 while true; do
-  status=$(curl -s -o /dev/null -w "%{http_code}" -I http://localhost:5000/download/1)
-  if [ "$status" = "200" ]; then
+  response=$(curl -s http://localhost:5000/download/1)
+  status=$(echo "$response" | jq -r '.status // empty')
+  if [ -z "$status" ]; then
+    # No JSON status field means we got the ZIP
     curl -o results.zip http://localhost:5000/download/1
     break
-  elif [ "$status" = "202" ]; then
-    echo "Still processing..."
-    sleep 5
-  else
-    echo "Error: $status"
+  elif [ "$status" = "Completed" ]; then
+    curl -o results.zip http://localhost:5000/download/1
     break
+  else
+    echo "Status: $status"
+    sleep 5
   fi
 done
 ```
@@ -224,7 +204,9 @@ All error responses follow this format:
 
 ```json
 {
-  "error": "Description of the error"
+  "id": 0,
+  "status": "Unknown",
+  "message": "Description of the error"
 }
 ```
 
