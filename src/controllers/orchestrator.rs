@@ -1,4 +1,4 @@
-use crate::models::body_dao::StatusBody;
+use crate::models::status_body::StatusBody;
 use crate::models::job_dao::Job;
 use crate::models::status_dto::Status;
 use crate::routes::router::AppState;
@@ -55,9 +55,14 @@ pub async fn download(State(state): State<AppState>, Path(id): Path<i32>) -> Res
     body.status = job.status.clone(); // FIXME: This clone
 
     match job.status {
-        Status::Completed => {
-            ([(header::CONTENT_TYPE, "application/zip")], job.download()).into_response()
-        }
+        Status::Completed => match job.download() {
+            Ok(data) => ([(header::CONTENT_TYPE, "application/zip")], data).into_response(),
+            Err(e) => {
+                tracing::error!("Error reading output file: {:?}", e);
+                body.message = "Error reading output file".to_string();
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
+            }
+        },
         _ => Json(body).into_response(),
     }
 }
@@ -83,11 +88,11 @@ pub async fn upload(State(state): State<AppState>, mut multipart: Multipart) -> 
     let mut job = Job::new(&state.config.data_path);
 
     // Create job directory
-    let _ = create_dir_all(&job.loc).await.map_err(|_| {
+    if let Err(_) = create_dir_all(&job.loc).await {
         let mut body = StatusBody::new();
         body.message = "Could not create job directory".to_string();
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
-    });
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response();
+    }
 
     // FIXME: Move the parsing of the form to a helper function
     let mut text_fields = HashMap::new();
