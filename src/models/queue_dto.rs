@@ -63,6 +63,20 @@ impl Queue<'_> {
         }
 
         // ===========================================================================================
+        // Step 2.5: Count active (submitted + running) jobs per service
+        let active_rows = sqlx::query(
+            "SELECT service, COUNT(*) as count FROM jobs WHERE status IN ('submitted', 'running') GROUP BY service"
+        )
+        .fetch_all(pool)
+        .await?;
+        let mut active_per_service: HashMap<String, u16> = HashMap::new();
+        for row in active_rows {
+            let service: String = row.get("service");
+            let count: i64 = row.get("count");
+            active_per_service.insert(service, count as u16);
+        }
+
+        // ===========================================================================================
         // Step 3: Filter jobs according to config limits
         // jobs_by_user_service will hold the jobs to be processed
         let mut jobs_by_user_service: HashMap<(i64, String), Vec<Job>> = HashMap::new();
@@ -98,8 +112,16 @@ impl Queue<'_> {
             let key = (user_id, service.clone());
             let user_queue = jobs_by_user_service.entry(key).or_default();
             let remaining_slots = (limit - submitted) as usize;
+            let max_runs = self
+                .config
+                .services
+                .get(&service)
+                .map(|s| s.max_runs)
+                .unwrap();
+            let active = *active_per_service.get(&service).unwrap_or(&0);
             // if submitted < limit, we can add more jobs, it has not yet reached the limit
             // if user_queue.len() < remaining_slots, we can still add to this user's queue
+            // if active < max_runs, the service has not reached its global concurrency cap
             // info!(
             //     "User: {}, Service: {}, Current Queue Length: {}, Remaining Slots: {}",
             //     user_id,
@@ -107,7 +129,7 @@ impl Queue<'_> {
             //     user_queue.len(),
             //     remaining_slots
             // );
-            if submitted < limit && user_queue.len() < remaining_slots {
+            if submitted < limit && user_queue.len() < remaining_slots && active < max_runs {
                 let status: String = row.get("status");
                 let loc: String = row.get("loc");
                 user_queue.push(Job {
@@ -183,6 +205,7 @@ mod tests {
                 upload_url: "http://example.com/upload".to_string(),
                 download_url: "http://example.com/download".to_string(),
                 runs_per_user: 5,
+                max_runs: u16::MAX,
             },
         );
 
@@ -221,6 +244,7 @@ mod tests {
                 upload_url: "http://example.com/upload_a".to_string(),
                 download_url: "http://example.com/download_a".to_string(),
                 runs_per_user: 5,
+                max_runs: u16::MAX,
             },
         );
         config.services.insert(
@@ -230,6 +254,7 @@ mod tests {
                 upload_url: "http://example.com/upload_b".to_string(),
                 download_url: "http://example.com/download_b".to_string(),
                 runs_per_user: 5,
+                max_runs: u16::MAX,
             },
         );
         config.services.insert(
@@ -239,6 +264,7 @@ mod tests {
                 upload_url: "http://example.com/upload_c".to_string(),
                 download_url: "http://example.com/download_c".to_string(),
                 runs_per_user: 1,
+                max_runs: u16::MAX,
             },
         );
 
@@ -378,5 +404,72 @@ mod tests {
         let queued_count = payload_queue.jobs.len();
         let expected_count = 2;
         assert_eq!(queued_count, expected_count);
+    }
+
+    #[tokio::test]
+    async fn test_load_respects_max_runs_per_service() {
+        let pool = SqlitePool::connect(":memory:")
+            .await
+            .unwrap_or_else(|e| panic!("Database connection failed: {e}"));
+        let mut config = Config::new().unwrap();
+        // Service A: max_runs=2 (at cap after 2 submitted)
+        config.services.insert(
+            "A".to_string(),
+            Service {
+                name: "A".to_string(),
+                upload_url: "http://example.com/upload_a".to_string(),
+                download_url: "http://example.com/download_a".to_string(),
+                runs_per_user: 5,
+                max_runs: 2,
+            },
+        );
+        // Service B: max_runs=10 (not at cap with 1 submitted)
+        config.services.insert(
+            "B".to_string(),
+            Service {
+                name: "B".to_string(),
+                upload_url: "http://example.com/upload_b".to_string(),
+                download_url: "http://example.com/download_b".to_string(),
+                runs_per_user: 5,
+                max_runs: 10,
+            },
+        );
+
+        create_jobs_table(&pool).await.unwrap();
+
+        // Insert 2 submitted jobs for service A (different users) — at cap
+        sqlx::query("INSERT INTO jobs (user_id, service, status, loc, dest_id) VALUES (1, 'A', 'submitted', 'loc', NULL)")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO jobs (user_id, service, status, loc, dest_id) VALUES (2, 'A', 'submitted', 'loc', NULL)")
+            .execute(&pool).await.unwrap();
+
+        // Insert 1 submitted job for service B — not at cap
+        sqlx::query("INSERT INTO jobs (user_id, service, status, loc, dest_id) VALUES (1, 'B', 'submitted', 'loc', NULL)")
+            .execute(&pool).await.unwrap();
+
+        // Insert 3 queued jobs for service A (different users, per-user limit not hit)
+        sqlx::query("INSERT INTO jobs (user_id, service, status, loc, dest_id) VALUES (3, 'A', 'queued', 'loc', NULL)")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO jobs (user_id, service, status, loc, dest_id) VALUES (4, 'A', 'queued', 'loc', NULL)")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO jobs (user_id, service, status, loc, dest_id) VALUES (5, 'A', 'queued', 'loc', NULL)")
+            .execute(&pool).await.unwrap();
+
+        // Insert 2 queued jobs for service B
+        sqlx::query("INSERT INTO jobs (user_id, service, status, loc, dest_id) VALUES (2, 'B', 'queued', 'loc', NULL)")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO jobs (user_id, service, status, loc, dest_id) VALUES (3, 'B', 'queued', 'loc', NULL)")
+            .execute(&pool).await.unwrap();
+
+        let mut queue = Queue::new(&config);
+        queue.load(&pool).await.unwrap();
+
+        // Service A is at its max_runs cap: 0 queued jobs should be loaded
+        let jobs_for_a = queue.jobs.iter().filter(|j| j.service == "A").count();
+        assert_eq!(jobs_for_a, 0, "Service A should be blocked by max_runs cap");
+
+        // Service B has room: 2 queued jobs should be loaded
+        let jobs_for_b = queue.jobs.iter().filter(|j| j.service == "B").count();
+        assert_eq!(jobs_for_b, 2, "Service B should load 2 queued jobs");
     }
 }
