@@ -13,20 +13,19 @@ use tokio::fs::create_dir_all;
 use utoipa;
 
 #[utoipa::path(
-       get,
-       path = "/download/{id}",
-       params(
-           ("id" = i32, Path, description = "Job identifier")
-       ),
-       responses(
-           (status = 200, description = "Job completed — returns zip file", content_type = "application/zip",
-  body = Vec<u8>),
-           (status = 200, description = "Job not yet complete — returns current job status", body = StatusBody),
-           (status = 404, description = "Not found", body = StatusBody),
-           (status = 500, description = "Internal server error", body = StatusBody),
-       ),
-       tag = "files"
-   )]
+    get,
+    path = "/download/{id}",
+    params(
+        ("id" = i32, Path, description = "Job identifier")
+    ),
+    responses(
+        (status = 200, description = "Job completed — returns zip file", content_type = "application/zip", body = Vec<u8>),
+        (status = 200, description = "Job not yet complete — returns current job status", body = StatusBody),
+        (status = 404, description = "Not found", body = StatusBody),
+        (status = 500, description = "Internal server error", body = StatusBody),
+    ),
+    tag = "files"
+)]
 pub async fn download(State(state): State<AppState>, Path(id): Path<i32>) -> Response {
     let mut job = Job::new(&state.config.data_path);
     let mut body = StatusBody::new();
