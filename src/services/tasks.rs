@@ -194,6 +194,96 @@ mod test {
     use tokio::time::sleep;
 
     #[tokio::test]
+    async fn test_cleaner_invalid_path() {
+        let pool = SqlitePool::connect(":memory:")
+            .await
+            .unwrap_or_else(|e| panic!("Database connection failed: {e}"));
+        create_jobs_table(&pool).await.unwrap();
+
+        let mut config = Config::new().unwrap();
+        config.data_path = "/nonexistent/path/does/not/exist".to_string();
+
+        // Should not panic — cleaner logs the error and returns
+        cleaner(pool, config).await;
+    }
+
+    #[tokio::test]
+    async fn test_cleaner_dir_not_in_db() {
+        let pool = SqlitePool::connect(":memory:")
+            .await
+            .unwrap_or_else(|e| panic!("Database connection failed: {e}"));
+        create_jobs_table(&pool).await.unwrap();
+
+        let tempdir = TempDir::new().unwrap();
+        let orphan_dir = tempdir.path().join("orphan_job");
+        fs::create_dir_all(&orphan_dir).unwrap();
+
+        let mut config = Config::new().unwrap();
+        config.data_path = tempdir.path().to_str().unwrap().to_string();
+        config.max_age = Duration::from_nanos(1);
+
+        sleep(Duration::from_millis(1)).await;
+
+        cleaner(pool, config).await;
+
+        // Directory is still there — retrieve_by_loc failed so nothing was removed
+        assert!(orphan_dir.exists());
+    }
+
+    #[tokio::test]
+    async fn test_sender_success() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = SqlitePool::connect(":memory:")
+            .await
+            .unwrap_or_else(|e| panic!("Database connection failed: {e}"));
+        create_jobs_table(&pool).await.unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+
+        // Build a Payload response that Client::upload expects
+        let mut mock_payload = Payload::new();
+        mock_payload.set_id(42);
+        mock_payload.set_status(crate::models::status_dto::Status::Prepared);
+        let mock_body = serde_json::to_string(&mock_payload).unwrap();
+
+        let mock = server
+            .mock("POST", "/submit")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_body)
+            .create_async()
+            .await;
+
+        let mut config = Config::new().unwrap();
+        config.services.insert(
+            "test".to_string(),
+            Service {
+                name: "test".to_string(),
+                upload_url: format!("{}/submit", server.url()),
+                download_url: format!("{}/retrieve", server.url()),
+                runs_per_user: 5,
+            },
+        );
+
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_service("test".to_string());
+        fs::create_dir_all(&job.loc).unwrap();
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Queued, &pool).await.unwrap();
+        let job_id = job.id;
+
+        sender(pool.clone(), config).await;
+
+        mock.assert_async().await;
+
+        let tempdir2 = TempDir::new().unwrap();
+        let mut updated = Job::new(tempdir2.path().to_str().unwrap());
+        updated.retrieve_id(job_id, &pool).await.unwrap();
+        assert_eq!(updated.status, Status::Submitted);
+        assert_eq!(updated.dest_id, 42);
+    }
+
+    #[tokio::test]
     async fn test_sender() {
         let pool = SqlitePool::connect(":memory:")
             .await

@@ -285,6 +285,28 @@ mod tests {
 
     #[test]
     #[serial]
+    fn test_config_new_custom_db_path() {
+        // SAFETY: serial test — no concurrent env mutation
+        unsafe { env::set_var("DB_PATH", "/tmp/custom.db") };
+        let config = Config::new().unwrap();
+        cleanup_env(&["DB_PATH"]);
+
+        assert_eq!(config.db_path, "/tmp/custom.db");
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_new_custom_data_path() {
+        // SAFETY: serial test — no concurrent env mutation
+        unsafe { env::set_var("DATA_PATH", "/tmp/custom_data") };
+        let config = Config::new().unwrap();
+        cleanup_env(&["DATA_PATH"]);
+
+        assert_eq!(config.data_path, "/tmp/custom_data");
+    }
+
+    #[test]
+    #[serial]
     fn test_config_new_with_service_env() {
         // SAFETY: serial test — no concurrent env mutation
         unsafe {

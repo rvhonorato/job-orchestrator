@@ -316,6 +316,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_retrieve_completed_missing_dir() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        let mut payload = Payload::new();
+        payload.add_to_db(&pool).await.unwrap();
+        let payload_id = payload.id;
+
+        // Point loc at a directory that does not exist — zip_directory will fail
+        payload.set_loc(tempdir.path().join("does_not_exist"));
+        payload.update_loc(&pool).await.unwrap();
+        payload.update_status(Status::Completed, &pool).await.unwrap();
+
+        let app = create_client_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/retrieve/{payload_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
     async fn test_load() {
         let tempdir = TempDir::new().unwrap();
         let pool = setup_test_db().await;

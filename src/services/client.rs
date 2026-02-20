@@ -777,4 +777,45 @@ mod test {
         let content = fs::read(output_path).unwrap();
         assert_eq!(content, b"test zip content");
     }
+
+    #[tokio::test]
+    async fn test_client_download_non_completed() {
+        let mut server = Server::new_async().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mut job = Job::new(temp_dir.path().to_str().unwrap());
+        job.dest_id = 99;
+        fs::create_dir_all(&job.loc).unwrap();
+
+        // Server returns 200 with JSON Payload — job still running
+        let mut running_payload = Payload::new();
+        running_payload.set_id(99);
+        running_payload.set_status(crate::models::status_dto::Status::Running);
+        let body = serde_json::to_string(&running_payload).unwrap();
+
+        let mock = server
+            .mock("GET", "/retrieve/99")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let client = Client;
+        let url = format!("{}/retrieve", server.url());
+        let result = client.download(&job, &url).await;
+
+        mock.assert_async().await;
+        assert_eq!(result.unwrap(), crate::models::status_dto::Status::Running);
+    }
+
+    #[test]
+    fn test_validate_script_non_utf8() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let script_path = temp_dir.path().join("run.sh");
+        // Write bytes that are not valid UTF-8
+        fs::write(&script_path, b"\xff\xfe invalid utf8 \x80\x81").unwrap();
+        let result = validate_script(&script_path);
+        assert!(matches!(result, Err(ClientError::UnsafeScript { .. })));
+    }
 }
