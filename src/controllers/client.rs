@@ -128,3 +128,211 @@ pub async fn load() -> Json<f32> {
 
     Json(sys.global_cpu_usage())
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::config::loader::{Config, Service};
+    use crate::models::payload_dao::Payload;
+    use crate::models::payload_dto::create_payload_table;
+    use crate::models::status_dto::Status;
+    use crate::routes::router::create_client_routes;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use sqlx::SqlitePool;
+    use std::collections::HashMap;
+    use std::fs;
+    use tempfile::TempDir;
+    use tower::ServiceExt;
+
+    async fn setup_test_db() -> SqlitePool {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        create_payload_table(&pool).await.unwrap();
+        pool
+    }
+
+    fn make_config(data_path: &str) -> Config {
+        let mut services = HashMap::new();
+        services.insert(
+            "test".to_string(),
+            Service {
+                name: "test".to_string(),
+                upload_url: "http://example.com/upload".to_string(),
+                download_url: "http://example.com/download".to_string(),
+                runs_per_user: 5,
+            },
+        );
+        Config {
+            services,
+            db_path: ":memory:".to_string(),
+            data_path: data_path.to_string(),
+            max_age: std::time::Duration::from_secs(3600),
+            port: 5000,
+        }
+    }
+
+    fn build_multipart(boundary: &str, parts: &[(&str, &[u8], Option<&str>)]) -> Vec<u8> {
+        let mut body = Vec::new();
+        for (name, data, filename) in parts {
+            body.extend(format!("--{boundary}\r\n").as_bytes());
+            if let Some(fname) = filename {
+                body.extend(
+                    format!(
+                        "Content-Disposition: form-data; name=\"{name}\"; filename=\"{fname}\"\r\n"
+                    )
+                    .as_bytes(),
+                );
+                body.extend(b"Content-Type: application/octet-stream\r\n");
+            } else {
+                body.extend(
+                    format!("Content-Disposition: form-data; name=\"{name}\"\r\n").as_bytes(),
+                );
+            }
+            body.extend(b"\r\n");
+            body.extend(*data);
+            body.extend(b"\r\n");
+        }
+        body.extend(format!("--{boundary}--\r\n").as_bytes());
+        body
+    }
+
+    async fn body_bytes(response: axum::response::Response) -> bytes::Bytes {
+        axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_submit_success() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_client_routes(pool, config);
+
+        let boundary = "testboundary123";
+        let body = build_multipart(
+            boundary,
+            &[("file", b"file content".as_slice(), Some("input.txt"))],
+        );
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/submit")
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let bytes = body_bytes(response).await;
+        let payload: Payload = serde_json::from_slice(&bytes).unwrap();
+        assert!(payload.id > 0);
+        assert_eq!(payload.status, Status::Prepared);
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_not_found() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_client_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/retrieve/9999")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_non_completed() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        let mut payload = Payload::new();
+        payload.add_to_db(&pool).await.unwrap();
+        payload.update_status(Status::Prepared, &pool).await.unwrap();
+        let payload_id = payload.id;
+
+        let app = create_client_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/retrieve/{payload_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let bytes = body_bytes(response).await;
+        let retrieved: Payload = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(retrieved.status, Status::Prepared);
+        assert_eq!(retrieved.id, payload_id);
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_completed() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        let mut payload = Payload::new();
+        payload.add_to_db(&pool).await.unwrap();
+        let payload_id = payload.id;
+
+        let payload_dir = tempdir.path().join(payload_id.to_string());
+        fs::create_dir_all(&payload_dir).unwrap();
+        fs::write(payload_dir.join("output.txt"), b"result data").unwrap();
+
+        payload.set_loc(payload_dir);
+        payload.update_loc(&pool).await.unwrap();
+        payload.update_status(Status::Completed, &pool).await.unwrap();
+
+        let app = create_client_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/retrieve/{payload_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert_eq!(content_type, "application/zip");
+    }
+
+    #[tokio::test]
+    async fn test_load() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_client_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/load")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let bytes = body_bytes(response).await;
+        let load: f32 = serde_json::from_slice(&bytes).unwrap();
+        assert!(load.is_finite(), "CPU load should be a finite number, got {load}");
+    }
+}

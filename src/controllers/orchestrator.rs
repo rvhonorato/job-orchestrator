@@ -197,3 +197,410 @@ pub async fn upload(State(state): State<AppState>, mut multipart: Multipart) -> 
 
     (StatusCode::CREATED, Json(body)).into_response()
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::config::loader::{Config, Service};
+    use crate::models::job_dao::Job;
+    use crate::models::job_dto::create_jobs_table;
+    use crate::models::status_body::StatusBody;
+    use crate::models::status_dto::Status;
+    use crate::routes::router::create_routes;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use sqlx::SqlitePool;
+    use std::collections::HashMap;
+    use std::fs;
+    use tempfile::TempDir;
+    use tower::ServiceExt;
+
+    async fn setup_test_db() -> SqlitePool {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        create_jobs_table(&pool).await.unwrap();
+        pool
+    }
+
+    fn make_config(data_path: &str) -> Config {
+        let mut services = HashMap::new();
+        services.insert(
+            "test".to_string(),
+            Service {
+                name: "test".to_string(),
+                upload_url: "http://example.com/upload".to_string(),
+                download_url: "http://example.com/download".to_string(),
+                runs_per_user: 5,
+            },
+        );
+        Config {
+            services,
+            db_path: ":memory:".to_string(),
+            data_path: data_path.to_string(),
+            max_age: std::time::Duration::from_secs(3600),
+            port: 5000,
+        }
+    }
+
+    fn build_multipart(boundary: &str, parts: &[(&str, &[u8], Option<&str>)]) -> Vec<u8> {
+        let mut body = Vec::new();
+        for (name, data, filename) in parts {
+            body.extend(format!("--{boundary}\r\n").as_bytes());
+            if let Some(fname) = filename {
+                body.extend(
+                    format!(
+                        "Content-Disposition: form-data; name=\"{name}\"; filename=\"{fname}\"\r\n"
+                    )
+                    .as_bytes(),
+                );
+                body.extend(b"Content-Type: application/octet-stream\r\n");
+            } else {
+                body.extend(
+                    format!("Content-Disposition: form-data; name=\"{name}\"\r\n").as_bytes(),
+                );
+            }
+            body.extend(b"\r\n");
+            body.extend(*data);
+            body.extend(b"\r\n");
+        }
+        body.extend(format!("--{boundary}--\r\n").as_bytes());
+        body
+    }
+
+    async fn body_bytes(response: axum::response::Response) -> bytes::Bytes {
+        axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_upload_success() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_routes(pool, config);
+
+        let boundary = "testboundary123";
+        let body = build_multipart(
+            boundary,
+            &[
+                ("file", b"file content".as_slice(), Some("test.txt")),
+                ("user_id", b"1", None),
+                ("service", b"test", None),
+            ],
+        );
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/upload")
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body.status, Status::Queued);
+        assert!(body.message.contains("Job successfully uploaded"));
+    }
+
+    #[tokio::test]
+    async fn test_upload_missing_user_id() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_routes(pool, config);
+
+        let boundary = "testboundary123";
+        let body = build_multipart(
+            boundary,
+            &[
+                ("file", b"file content".as_slice(), Some("test.txt")),
+                ("service", b"test", None),
+            ],
+        );
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/upload")
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert!(body.message.contains("Missing user_id"));
+    }
+
+    #[tokio::test]
+    async fn test_upload_invalid_user_id() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_routes(pool, config);
+
+        let boundary = "testboundary123";
+        let body = build_multipart(
+            boundary,
+            &[
+                ("file", b"file content".as_slice(), Some("test.txt")),
+                ("user_id", b"abc", None),
+                ("service", b"test", None),
+            ],
+        );
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/upload")
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert!(body.message.contains("Invalid user_id"));
+    }
+
+    #[tokio::test]
+    async fn test_upload_missing_service() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_routes(pool, config);
+
+        let boundary = "testboundary123";
+        let body = build_multipart(
+            boundary,
+            &[
+                ("file", b"file content".as_slice(), Some("test.txt")),
+                ("user_id", b"1", None),
+            ],
+        );
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/upload")
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert!(body.message.contains("Missing service"));
+    }
+
+    #[tokio::test]
+    async fn test_upload_invalid_service() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_routes(pool, config);
+
+        let boundary = "testboundary123";
+        let body = build_multipart(
+            boundary,
+            &[
+                ("file", b"file content".as_slice(), Some("test.txt")),
+                ("user_id", b"1", None),
+                ("service", b"unknownservice", None),
+            ],
+        );
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/upload")
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert!(body.message.contains("Invalid service"));
+    }
+
+    #[tokio::test]
+    async fn test_download_not_found() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/download/9999")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            body.message.to_lowercase().contains("not found")
+                && body.message.contains("9999"),
+            "Expected 'not found' message mentioning job id, got: {}",
+            body.message
+        );
+    }
+
+    #[tokio::test]
+    async fn test_download_queued_job() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Queued, &pool).await.unwrap();
+        let job_id = job.id;
+
+        let app = create_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/download/{job_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body.id, job_id);
+        assert_eq!(body.status, Status::Queued);
+    }
+
+    #[tokio::test]
+    async fn test_download_running_job() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Running, &pool).await.unwrap();
+        let job_id = job.id;
+
+        let app = create_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/download/{job_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body.id, job_id);
+        assert_eq!(body.status, Status::Running);
+    }
+
+    #[tokio::test]
+    async fn test_download_completed_job() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+        job.add_to_db(&pool).await.unwrap();
+
+        fs::create_dir_all(&job.loc).unwrap();
+        fs::write(job.loc.join("output.zip"), b"fake zip content").unwrap();
+
+        job.update_status(Status::Completed, &pool).await.unwrap();
+        let job_id = job.id;
+
+        let app = create_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/download/{job_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert_eq!(content_type, "application/zip");
+
+        let bytes = body_bytes(response).await;
+        assert_eq!(&bytes[..], b"fake zip content");
+    }
+
+    #[tokio::test]
+    async fn test_download_completed_missing_file() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+        job.add_to_db(&pool).await.unwrap();
+        // No directory or output.zip created on disk
+        job.update_status(Status::Completed, &pool).await.unwrap();
+        let job_id = job.id;
+
+        let app = create_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/download/{job_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            body.message.contains("output file"),
+            "Expected error about output file, got: {}",
+            body.message
+        );
+    }
+}

@@ -272,4 +272,110 @@ mod tests {
     }
 
     // ===== Config::new() environment variable tests =====
+
+    use serial_test::serial;
+    use std::env;
+
+    fn cleanup_env(keys: &[&str]) {
+        for key in keys {
+            // SAFETY: tests using this are marked #[serial] so no concurrent env mutation
+            unsafe { env::remove_var(key) };
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_new_with_service_env() {
+        // SAFETY: serial test — no concurrent env mutation
+        unsafe {
+            env::set_var("SERVICE_FOO_UPLOAD_URL", "http://foo.com/upload");
+            env::set_var("SERVICE_FOO_DOWNLOAD_URL", "http://foo.com/download");
+            env::set_var("SERVICE_FOO_RUNS_PER_USER", "3");
+        }
+        let config = Config::new().unwrap();
+        cleanup_env(&[
+            "SERVICE_FOO_UPLOAD_URL",
+            "SERVICE_FOO_DOWNLOAD_URL",
+            "SERVICE_FOO_RUNS_PER_USER",
+        ]);
+
+        let service = config
+            .services
+            .get("foo")
+            .expect("Service 'foo' should be present");
+        assert_eq!(service.upload_url, "http://foo.com/upload");
+        assert_eq!(service.download_url, "http://foo.com/download");
+        assert_eq!(service.runs_per_user, 3);
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_new_multiple_services() {
+        // SAFETY: serial test — no concurrent env mutation
+        unsafe {
+            env::set_var("SERVICE_BAR_UPLOAD_URL", "http://bar.com/upload");
+            env::set_var("SERVICE_BAR_DOWNLOAD_URL", "http://bar.com/download");
+            env::set_var("SERVICE_BAZ_UPLOAD_URL", "http://baz.com/upload");
+            env::set_var("SERVICE_BAZ_DOWNLOAD_URL", "http://baz.com/download");
+        }
+        let config = Config::new().unwrap();
+        cleanup_env(&[
+            "SERVICE_BAR_UPLOAD_URL",
+            "SERVICE_BAR_DOWNLOAD_URL",
+            "SERVICE_BAZ_UPLOAD_URL",
+            "SERVICE_BAZ_DOWNLOAD_URL",
+        ]);
+
+        assert!(
+            config.services.contains_key("bar"),
+            "Service 'bar' should be present"
+        );
+        assert!(
+            config.services.contains_key("baz"),
+            "Service 'baz' should be present"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_new_custom_port() {
+        // SAFETY: serial test — no concurrent env mutation
+        unsafe { env::set_var("PORT", "8080") };
+        let config = Config::new().unwrap();
+        cleanup_env(&["PORT"]);
+
+        assert_eq!(config.port, 8080);
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_new_custom_max_age() {
+        // SAFETY: serial test — no concurrent env mutation
+        unsafe { env::set_var("MAX_AGE", "3600") };
+        let config = Config::new().unwrap();
+        cleanup_env(&["MAX_AGE"]);
+
+        assert_eq!(config.max_age, Duration::from_secs(3600));
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_new_service_name_lowercase() {
+        // SAFETY: serial test — no concurrent env mutation
+        unsafe {
+            env::set_var("SERVICE_UPPERCASE_UPLOAD_URL", "http://upper.com/upload");
+            env::set_var("SERVICE_UPPERCASE_DOWNLOAD_URL", "http://upper.com/download");
+        }
+        let config = Config::new().unwrap();
+        cleanup_env(&[
+            "SERVICE_UPPERCASE_UPLOAD_URL",
+            "SERVICE_UPPERCASE_DOWNLOAD_URL",
+        ]);
+
+        assert!(
+            config.services.contains_key("uppercase"),
+            "Service name should be lowercased: got keys {:?}",
+            config.services.keys().collect::<Vec<_>>()
+        );
+    }
 }

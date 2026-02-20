@@ -66,4 +66,5 @@ zip = "8.1"
 [dev-dependencies]
 mockall = "0.14"
 mockito = "1.7"
+serial_test = "3"
 tempfile = "3.25"

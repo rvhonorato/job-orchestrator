@@ -331,7 +331,8 @@ mod test {
         let db_path = tempdir.path().join("test.db");
         let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
         // Initialize config
-        let config = Config::new().unwrap();
+        let mut config = Config::new().unwrap();
+        config.data_path = tempdir.path().to_str().unwrap().to_string();
 
         // Add a payload
         let mut payload = Payload::new();
@@ -362,7 +363,7 @@ mod test {
             .expect("Failed to update payload status");
 
         // Run the runner
-        runner(pool.clone(), Config::new().unwrap()).await;
+        runner(pool.clone(), config).await;
 
         // Check the effects
         // NOTE: You need to retrieve the payload again to get the updated status
