@@ -171,6 +171,43 @@ mod tests {
     use crate::models::payload_dto::create_payload_table;
 
     #[tokio::test]
+    async fn test_list_per_status_jobs() {
+        let pool = SqlitePool::connect(":memory:")
+            .await
+            .unwrap_or_else(|e| panic!("Database connection failed: {e}"));
+        let mut config = Config::new().unwrap();
+        config.services.insert(
+            "svc".to_string(),
+            Service {
+                name: "svc".to_string(),
+                upload_url: "http://example.com/upload".to_string(),
+                download_url: "http://example.com/download".to_string(),
+                runs_per_user: 5,
+            },
+        );
+
+        create_jobs_table(&pool).await.unwrap();
+
+        sqlx::query("INSERT INTO jobs (user_id, service, status, loc, dest_id) VALUES (1, 'svc', 'submitted', '/tmp/a', NULL)")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO jobs (user_id, service, status, loc, dest_id) VALUES (2, 'svc', 'running', '/tmp/b', 5)")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO jobs (user_id, service, status, loc, dest_id) VALUES (3, 'svc', 'queued', '/tmp/c', NULL)")
+            .execute(&pool).await.unwrap();
+
+        let mut queue = Queue::new(&config);
+        queue
+            .list_per_status(vec![Status::Submitted, Status::Running], &pool)
+            .await
+            .unwrap();
+
+        assert_eq!(queue.jobs.len(), 2);
+        assert!(queue.jobs.iter().any(|j| j.status == Status::Submitted));
+        assert!(queue.jobs.iter().any(|j| j.status == Status::Running));
+        assert!(queue.jobs.iter().all(|j| j.status != Status::Queued));
+    }
+
+    #[tokio::test]
     async fn test_load_limits_jobs_per_user_per_service() {
         // Setup in-memory SQLite database
         let pool = SqlitePool::connect(":memory:")

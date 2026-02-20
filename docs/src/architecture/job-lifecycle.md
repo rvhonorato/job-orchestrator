@@ -132,8 +132,8 @@ The **Getter** background task (runs every 500ms):
 
 User can now:
 
-1. Check status via `HEAD /download/:id`
-2. Download results via `GET /download/:id`
+1. Check status via `GET /download/:id` (returns JSON with job state when not completed)
+2. Download results via `GET /download/:id` (returns ZIP when completed)
 3. Results are returned as a ZIP archive
 
 ### 7. Cleanup

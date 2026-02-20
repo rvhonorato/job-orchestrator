@@ -59,7 +59,7 @@ PORT=5000 job-orchestrator server
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
 | `/upload` | POST | Submit new job |
-| `/download/:id` | GET/HEAD | Get results or status |
+| `/download/:id` | GET | Get results or status |
 | `/health` | GET | Health check |
 | `/swagger-ui/` | GET | API documentation |
 

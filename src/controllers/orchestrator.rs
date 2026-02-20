@@ -1,10 +1,12 @@
 use crate::models::job_dao::Job;
+use crate::models::status_body::StatusBody;
 use crate::models::status_dto::Status;
 use crate::routes::router::AppState;
 use crate::utils::io::{sanitize_filename, save_file};
+use axum::response::{IntoResponse, Response};
 use axum::{
     extract::{Json, Multipart, Path, State},
-    http::StatusCode,
+    http::{StatusCode, header},
 };
 use std::collections::HashMap;
 use tokio::fs::create_dir_all;
@@ -17,33 +19,50 @@ use utoipa;
         ("id" = i32, Path, description = "Job identifier")
     ),
     responses(
-        (status = 200, description = "Job completed, downloading results", body = Vec<u8>), // OK
-        (status = 202, description = "Job is running"), // RUNNING == ACCEPTED
-        (status = 204, description = "Job results cleaned up (expired)"), // NO_CONTENT
-        (status = 201, description = "Job is queued"), // QUEUED == CREATED
-        (status = 400, description = "Job invalid (user error)"), // BAD_REQUEST
-        (status = 404, description = "Job not found"), // NOT_FOUND
-        (status = 410, description = "Job failed"), // GONE
-        (status = 500, description = "Internal server error or unknown state"), // INTERNAL_SERVER_ERROR
+        (status = 200, description = "Job completed — returns zip file", content_type = "application/zip", body = Vec<u8>),
+        (status = 200, description = "Job not yet complete — returns current job status", body = StatusBody),
+        (status = 404, description = "Not found", body = StatusBody),
+        (status = 500, description = "Internal server error", body = StatusBody),
     ),
     tag = "files"
 )]
-pub async fn download(
-    State(state): State<AppState>,
-    Path(id): Path<i32>,
-) -> Result<Vec<u8>, StatusCode> {
+pub async fn download(State(state): State<AppState>, Path(id): Path<i32>) -> Response {
     let mut job = Job::new(&state.config.data_path);
+    let mut body = StatusBody::new();
 
-    job.retrieve_id(id, &state.pool)
-        .await
-        .map_err(|e| match e {
-            sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        })?;
+    let result = job.retrieve_id(id, &state.pool).await;
+
+    if let Err(e) = result {
+        // Error when retrieving this id, check what kind of error it was
+        let status = match e {
+            // It is not found on the database
+            sqlx::Error::RowNotFound => {
+                body.message = format!("Job {id} not found in the database");
+                StatusCode::NOT_FOUND
+            }
+            // Something else
+            _ => {
+                body.message = "Internal server error".to_string();
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        };
+        // Return the error
+        return (status, Json(body)).into_response();
+    }
+
+    body.id = job.id;
+    body.status = job.status;
 
     match job.status {
-        Status::Completed => Ok(job.download()),
-        _ => Err(job.status.as_http_code()),
+        Status::Completed => match job.download() {
+            Ok(data) => ([(header::CONTENT_TYPE, "application/zip")], data).into_response(),
+            Err(e) => {
+                tracing::error!("Error reading output file: {:?}", e);
+                body.message = "Error reading output file".to_string();
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
+            }
+        },
+        _ => Json(body).into_response(),
     }
 }
 
@@ -57,56 +76,61 @@ pub async fn download(
         Additional fields may be included as needed."
     ),
     responses(
-        (status = 200, description = "File uploaded successfully", body = Job),
+        (status = 201, description = "File uploaded successfully", body = StatusBody),
         (status = 400, description = "Bad request"),
         (status = 500, description = "Internal server error"),
-        (status = 503, description = "Service unavailable")
     ),
     tag = "files"
 )]
-pub async fn upload(
-    State(state): State<AppState>,
-    mut multipart: Multipart,
-) -> Result<Json<Job>, (StatusCode, String)> {
+pub async fn upload(State(state): State<AppState>, mut multipart: Multipart) -> Response {
     // Create a new job with unique ID
     let mut job = Job::new(&state.config.data_path);
 
     // Create job directory
-    create_dir_all(&job.loc).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to create directory: {e}"),
-        )
-    })?;
+    if create_dir_all(&job.loc).await.is_err() {
+        let mut body = StatusBody::new();
+        body.message = "Could not create job directory".to_string();
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response();
+    }
 
+    // FIXME: Move the parsing of the form to a helper function
     let mut text_fields = HashMap::new();
     let mut file_count = 0;
+    let mut body = StatusBody::new();
+    loop {
+        let field = multipart.next_field().await;
+        let field = match field {
+            Ok(Some(f)) => f,
+            Ok(None) => break,
+            Err(e) => {
+                tracing::error!("Multipart error: {e}");
+                body.message = format!("Multipart error: {e}");
+                return (StatusCode::BAD_REQUEST, Json(body)).into_response();
+            }
+        };
 
-    // Process each field in the multipart stream
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
-        tracing::error!("Multipart error: {e}");
-        (StatusCode::BAD_REQUEST, format!("Multipart error: {e}"))
-    })? {
         let field_name = field.name().unwrap_or("unnamed").to_string();
 
         if let Some(filename) = field.file_name() {
             file_count += 1;
-            let filename = sanitize_filename(filename); // Important for security!
+            let filename = sanitize_filename(filename);
             let file_path = job.loc.join(&filename);
 
             tracing::info!("Saving file: {} to {}", filename, file_path.display());
 
-            // Create and save the file
-            save_file(field, &file_path).await?;
+            if let Err((err_code, err_msg)) = save_file(field, &file_path).await {
+                body.message = format!("Could not save file: {err_msg}");
+                return (err_code, Json(body)).into_response();
+            }
         } else {
-            // Handle text field
-            let text = field.text().await.map_err(|e| {
-                tracing::error!("Error reading text field: {e}");
-                (
-                    StatusCode::BAD_REQUEST,
-                    format!("Error reading text field: {e}"),
-                )
-            })?;
+            let text = match field.text().await {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::error!("Error reading text field: {e}");
+                    body.message = format!("Error reading text field: {e}");
+                    return (StatusCode::BAD_REQUEST, Json(body)).into_response();
+                }
+            };
             text_fields.insert(field_name, text);
         }
     }
@@ -116,760 +140,466 @@ pub async fn upload(
         file_count,
         text_fields.len()
     );
-
     // Now handle special fields
-    let user_id = text_fields
-        .get("user_id")
-        .ok_or((StatusCode::BAD_REQUEST, "Missing user_id".to_string()))?
-        .parse::<i32>()
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid user_id".to_string()))?;
 
-    let service = text_fields
-        .get("service")
-        .ok_or((StatusCode::BAD_REQUEST, "Missing service".to_string()))?
-        .to_string();
+    // Get the user id from the request
+    let uid_str = match text_fields.get("user_id") {
+        Some(v) => v,
+        None => {
+            body.message = "Missing user_id field".to_string();
+            return (StatusCode::BAD_REQUEST, Json(body)).into_response();
+        }
+    };
+
+    // Check if this user id is valid, it must be a number
+    let uid = match uid_str.parse::<i32>() {
+        Ok(v) => v,
+        Err(_) => {
+            body.message = "Invalid user_id, should be a number".to_string();
+            return (StatusCode::BAD_REQUEST, Json(body)).into_response();
+        }
+    };
+
+    // Get service from the request
+    let service = match text_fields.get("service") {
+        Some(v) => v,
+        None => {
+            body.message = "Missing service field".to_string();
+            return (StatusCode::BAD_REQUEST, Json(body)).into_response();
+        }
+    };
 
     // Validate service exists
-    if !state.config.services.contains_key(&service) {
-        return Err((StatusCode::BAD_REQUEST, "Invalid service".to_string()));
+    if !state.config.services.contains_key(service) {
+        body.message = "Invalid service".to_string();
+        return (StatusCode::BAD_REQUEST, Json(body)).into_response();
     }
 
-    job.set_user_id(user_id);
-    job.set_service(service);
+    job.set_user_id(uid);
+    job.set_service(service.to_string());
 
     // Add job to database
-    job.add_to_db(&state.pool)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let Ok(_) = job.add_to_db(&state.pool).await else {
+        body.message = "Error while adding the job to the database".to_string();
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response();
+    };
 
-    job.update_status(Status::Queued, &state.pool)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let Ok(_) = job.update_status(Status::Queued, &state.pool).await else {
+        body.message = format!("Could not update the status of job {0}", job.id);
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response();
+    };
 
-    Ok(Json(job))
+    // Everything went fine
+    body.status = job.status;
+    body.id = job.id;
+    body.message = "Job successfully uploaded".to_string();
+
+    (StatusCode::CREATED, Json(body)).into_response()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::config::loader::{Config, Service};
-    use crate::routes::router::AppState;
-    use axum::body::to_bytes;
+    use crate::models::job_dao::Job;
+    use crate::models::job_dto::create_jobs_table;
+    use crate::models::status_body::StatusBody;
+    use crate::models::status_dto::Status;
+    use crate::routes::router::create_routes;
     use axum::body::Body;
-    use axum::{routing::post, Router};
-    use http::{header, Request, StatusCode};
+    use axum::http::{Request, StatusCode};
     use sqlx::SqlitePool;
+    use std::collections::HashMap;
     use std::fs;
-    use std::io::Write;
-    use std::path::PathBuf;
-    use tempfile::tempdir;
-    use tower::ServiceExt; // for `oneshot`
-    use uuid::Uuid;
+    use tempfile::TempDir;
+    use tower::ServiceExt;
 
-    // Helper function to initialize the database schema
-    pub async fn init_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            r#"
-        CREATE TABLE IF NOT EXISTS jobs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            service TEXT NOT NULL,
-            status TEXT NOT NULL,
-            loc TEXT NOT NULL,
-            dest_id TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    "#,
-        )
-        .execute(pool)
-        .await?;
-        Ok(())
+    async fn setup_test_db() -> SqlitePool {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        create_jobs_table(&pool).await.unwrap();
+        pool
     }
 
-    // Helper functions to create multipart form data
-    fn form_field(boundary: &str, name: &str, value: &str) -> Vec<u8> {
-        format!(
-            "--{boundary}\r\n\
-                Content-Disposition: form-data; name=\"{name}\"\r\n\r\n\
-                {value}\r\n"
-        )
-        .into_bytes()
-    }
-
-    fn form_file(
-        boundary: &str,
-        name: &str,
-        filename: &str,
-        content_type: &str,
-        content: &[u8],
-    ) -> Vec<u8> {
-        let mut part = format!(
-            "--{boundary}\r\n\
-                Content-Disposition: form-data; name=\"{name}\"; filename=\"{filename}\"\r\n\
-                Content-Type: {content_type}\r\n\r\n"
-        )
-        .into_bytes();
-        part.extend_from_slice(content);
-        part.extend_from_slice(b"\r\n");
-        part
-    }
-    fn form_text_file(boundary: &str, name: &str, filename: &str, content: &str) -> Vec<u8> {
-        let mut part = format!(
-            "--{boundary}\r\n\
-                Content-Disposition: form-data; name=\"{name}\"; filename=\"{filename}\"\r\n\
-                Content-Type: text/plain\r\n\r\n"
-        )
-        .into_bytes();
-        part.extend_from_slice(content.as_bytes());
-        part.extend_from_slice(b"\r\n");
-        part
-    }
-
-    #[tokio::test]
-    async fn test_upload() {
-        // Setup the route
-        let data_dir = tempdir().unwrap();
-        let mut config = Config::new().unwrap();
-        config.data_path = data_dir.path().to_str().unwrap().to_string();
-        config.services = HashMap::from([(
-            String::from("test-service"),
+    fn make_config(data_path: &str) -> Config {
+        let mut services = HashMap::new();
+        services.insert(
+            "test".to_string(),
             Service {
-                name: String::from("test-service"),
-                upload_url: String::from("http://localhost/upload"),
-                download_url: String::from("http://localhost/download"),
+                name: "test".to_string(),
+                upload_url: "http://example.com/upload".to_string(),
+                download_url: "http://example.com/download".to_string(),
                 runs_per_user: 5,
             },
-        )]);
+        );
+        Config {
+            services,
+            db_path: ":memory:".to_string(),
+            data_path: data_path.to_string(),
+            max_age: std::time::Duration::from_secs(3600),
+            port: 5000,
+        }
+    }
 
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        init_db(&pool).await.unwrap(); // Initialize the database schema
-        let state = AppState { pool, config };
-
-        let app = Router::new()
-            .route("/upload", post(upload))
-            .with_state(state);
-
-        // Create a multipart/form-data request
-        let boundary = format!("----Boundary{}", Uuid::new_v4());
+    fn build_multipart(boundary: &str, parts: &[(&str, &[u8], Option<&str>)]) -> Vec<u8> {
         let mut body = Vec::new();
-        body.extend(form_field(&boundary, "service", "test-service"));
-        body.extend(form_field(&boundary, "user_id", "42"));
-        body.extend(form_file(
-            &boundary,
-            "file",
-            "test.txt",
-            "application/octet-stream",
-            b"\x00\x01\x02\x03",
-        ));
-        body.extend(form_text_file(
-            &boundary,
-            "file",
-            "test01.txt",
-            "hello this is a test file",
-        ));
+        for (name, data, filename) in parts {
+            body.extend(format!("--{boundary}\r\n").as_bytes());
+            if let Some(fname) = filename {
+                body.extend(
+                    format!(
+                        "Content-Disposition: form-data; name=\"{name}\"; filename=\"{fname}\"\r\n"
+                    )
+                    .as_bytes(),
+                );
+                body.extend(b"Content-Type: application/octet-stream\r\n");
+            } else {
+                body.extend(
+                    format!("Content-Disposition: form-data; name=\"{name}\"\r\n").as_bytes(),
+                );
+            }
+            body.extend(b"\r\n");
+            body.extend(*data);
+            body.extend(b"\r\n");
+        }
         body.extend(format!("--{boundary}--\r\n").as_bytes());
+        body
+    }
 
-        // Create the request
-        let req = Request::builder()
+    async fn body_bytes(response: axum::response::Response) -> bytes::Bytes {
+        axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_upload_success() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_routes(pool, config);
+
+        let boundary = "testboundary123";
+        let body = build_multipart(
+            boundary,
+            &[
+                ("file", b"file content".as_slice(), Some("test.txt")),
+                ("user_id", b"1", None),
+                ("service", b"test", None),
+            ],
+        );
+
+        let request = Request::builder()
             .method("POST")
             .uri("/upload")
             .header(
-                header::CONTENT_TYPE,
+                "content-type",
                 format!("multipart/form-data; boundary={boundary}"),
             )
             .body(Body::from(body))
             .unwrap();
 
-        // Make the request
-        let response = app.oneshot(req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
 
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["id"], 1);
-        assert_eq!(json["status"], String::from("Queued"));
-        assert_eq!(json["service"], String::from("test-service"));
-        assert_eq!(json["user_id"], 42);
-
-        // Check if the file was saved correctly
-        let expected_loc = json["loc"].as_str().unwrap();
-        let expected_file = PathBuf::from(expected_loc).join("test.txt");
-        assert!(expected_file.exists());
-        let expected_file = PathBuf::from(expected_loc).join("test01.txt");
-        assert!(expected_file.exists());
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body.status, Status::Queued);
+        assert!(body.message.contains("Job successfully uploaded"));
     }
-
-    #[tokio::test]
-    async fn test_upload_non_existing_service() {
-        // Setup the route
-        let data_dir = tempdir().unwrap();
-        let mut config = Config::new().unwrap();
-        config.data_path = data_dir.path().to_str().unwrap().to_string();
-
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        init_db(&pool).await.unwrap(); // Initialize the database schema
-        let state = AppState { pool, config };
-
-        let app = Router::new()
-            .route("/upload", post(upload))
-            .with_state(state);
-
-        // Create a multipart/form-data request
-        let boundary = format!("----Boundary{}", Uuid::new_v4());
-        let mut body = Vec::new();
-        body.extend(form_field(&boundary, "service", "my-test-service"));
-        body.extend(form_field(&boundary, "user_id", "42"));
-        body.extend(form_file(
-            &boundary,
-            "file",
-            "test.txt",
-            "application/octet-stream",
-            b"\x00\x01\x02\x03",
-        ));
-        body.extend(form_text_file(
-            &boundary,
-            "file",
-            "test01.txt",
-            "hello this is a test file",
-        ));
-        body.extend(format!("--{boundary}--\r\n").as_bytes());
-
-        // Create the request
-        let req = Request::builder()
-            .method("POST")
-            .uri("/upload")
-            .header(
-                header::CONTENT_TYPE,
-                format!("multipart/form-data; boundary={boundary}"),
-            )
-            .body(Body::from(body))
-            .unwrap();
-
-        // Make the request
-        let response = app.oneshot(req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    }
-
-    #[tokio::test]
-    async fn test_download_non_init_db() {
-        let config = Config::new().unwrap();
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap(); // Mock database connection;
-        let state = State(AppState { pool, config }); // Mock state for testing
-        let path = Path(1);
-        let response = download(state, path).await;
-        match response {
-            Ok(_) => {}
-            Err(e) => assert_eq!(e, StatusCode::INTERNAL_SERVER_ERROR),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_download_non_existing_job() {
-        let config = Config::new().unwrap();
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap(); // Mock database connection;
-        init_db(&pool).await.unwrap(); // Initialize the database schema
-        let state = State(AppState { pool, config }); // Mock state for testing
-        let path = Path(1);
-        let response = download(state, path).await;
-        match response {
-            Ok(_) => {}
-            Err(e) => assert_eq!(e, StatusCode::NOT_FOUND),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_download_completed_job() {
-        let config = Config::new().unwrap();
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap(); // Mock database connection;
-        init_db(&pool).await.unwrap(); // Initialize the database schema
-
-        // Make a completed job
-        let data_dir = tempdir().unwrap();
-        let mut job = Job::new(data_dir.path().to_str().unwrap());
-        fs::create_dir(&job.loc).unwrap(); // Create data directory
-        let dummy_file_path = job.loc.join("output.zip");
-        let mut file = fs::File::create(&dummy_file_path).unwrap();
-        writeln!(file, "dummy data").unwrap(); // Create a dummy file
-                                               //
-        job.add_to_db(&pool).await.unwrap(); // Add job to the database;
-        job.update_status(Status::Completed, &pool).await.unwrap(); // Update job status to Failed;
-
-        let state = State(AppState { pool, config }); // Mock state for testing
-        let path = Path(job.id);
-
-        if let Ok(v) = download(state, path).await {
-            assert_eq!(v, fs::read(dummy_file_path).unwrap());
-        }
-    }
-
-    #[tokio::test]
-    async fn test_download_queued_job() {
-        let config = Config::new().unwrap();
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap(); // Mock database connection;
-        init_db(&pool).await.unwrap(); // Initialize the database schema
-
-        // Make a completed job
-        let data_dir = tempdir().unwrap();
-        let mut job = Job::new(data_dir.path().to_str().unwrap());
-        fs::create_dir(&job.loc).unwrap(); // Create data directory
-        let dummy_file_path = job.loc.join("output.zip");
-        let mut file = fs::File::create(&dummy_file_path).unwrap();
-        writeln!(file, "dummy data").unwrap(); // Create a dummy file
-                                               //
-        job.add_to_db(&pool).await.unwrap(); // Add job to the database;
-        job.update_status(Status::Queued, &pool).await.unwrap(); // Update job status to Failed;
-
-        let state = State(AppState { pool, config }); // Mock state for testing
-        let path = Path(job.id);
-
-        let response = download(state, path).await;
-        match response {
-            Ok(_) => {}
-            Err(e) => assert_eq!(e, StatusCode::CREATED),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_download_running_job() {
-        let config = Config::new().unwrap();
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap(); // Mock database connection;
-        init_db(&pool).await.unwrap(); // Initialize the database schema
-
-        // Make a completed job
-        let data_dir = tempdir().unwrap();
-        let mut job = Job::new(data_dir.path().to_str().unwrap());
-        fs::create_dir(&job.loc).unwrap(); // Create data directory
-        let dummy_file_path = job.loc.join("output.zip");
-        let mut file = fs::File::create(&dummy_file_path).unwrap();
-        writeln!(file, "dummy data").unwrap(); // Create a dummy file
-                                               //
-        job.add_to_db(&pool).await.unwrap(); // Add job to the database;
-        job.update_status(Status::Running, &pool).await.unwrap(); // Update job status to Failed;
-
-        let state = State(AppState { pool, config }); // Mock state for testing
-        let path = Path(job.id);
-
-        let response = download(state, path).await;
-        match response {
-            Ok(_) => {}
-            Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
-        }
-    }
-
-    /// Failed jobs should return 410 GONE to indicate the resource permanently failed.
-    /// This distinguishes from Cleaned (204) which is a normal lifecycle state.
-    #[tokio::test]
-    async fn test_download_failed_job_returns_gone() {
-        let config = Config::new().unwrap();
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        init_db(&pool).await.unwrap();
-        let mut job = Job::new("");
-        job.add_to_db(&pool).await.unwrap();
-        job.update_status(Status::Failed, &pool).await.unwrap();
-
-        let state = State(AppState { pool, config });
-        let path = Path(job.id);
-
-        match download(state, path).await {
-            Ok(_) => panic!("Expected error for failed job"),
-            Err(e) => assert_eq!(
-                e,
-                StatusCode::GONE,
-                "Failed jobs should return 410 GONE, not 204 NO_CONTENT"
-            ),
-        }
-    }
-
-    /// Cleaned jobs should return 204 NO_CONTENT - this is a normal lifecycle state
-    /// where the job completed successfully but results have expired.
-    #[tokio::test]
-    async fn test_download_cleaned_job_returns_no_content() {
-        let config = Config::new().unwrap();
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        init_db(&pool).await.unwrap();
-        let mut job = Job::new("");
-        job.add_to_db(&pool).await.unwrap();
-        job.update_status(Status::Cleaned, &pool).await.unwrap();
-
-        let state = State(AppState { pool, config });
-        let path = Path(job.id);
-
-        match download(state, path).await {
-            Ok(_) => panic!("Expected error for cleaned job"),
-            Err(e) => assert_eq!(
-                e,
-                StatusCode::NO_CONTENT,
-                "Cleaned jobs should return 204 NO_CONTENT (results expired)"
-            ),
-        }
-    }
-
-    /// Invalid jobs should return 400 BAD_REQUEST to indicate a user error (e.g., missing run.sh).
-    #[tokio::test]
-    async fn test_download_invalid_job_returns_bad_request() {
-        let config = Config::new().unwrap();
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        init_db(&pool).await.unwrap();
-        let mut job = Job::new("");
-        job.add_to_db(&pool).await.unwrap();
-        job.update_status(Status::Invalid, &pool).await.unwrap();
-
-        let state = State(AppState { pool, config });
-        let path = Path(job.id);
-
-        match download(state, path).await {
-            Ok(_) => panic!("Expected error for invalid job"),
-            Err(e) => assert_eq!(
-                e,
-                StatusCode::BAD_REQUEST,
-                "Invalid jobs should return 400 BAD_REQUEST (user error)"
-            ),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_download_accepted_job() {
-        let config = Config::new().unwrap();
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap(); // Mock database connection;
-        init_db(&pool).await.unwrap(); // Initialize the database schema
-        let mut job = Job::new("");
-        job.add_to_db(&pool).await.unwrap(); // Add job to the database;
-        job.update_status(Status::Queued, &pool).await.unwrap(); // Update job status to Queued;
-                                                                 //
-        let state = State(AppState { pool, config }); // Mock state for testing
-        let path = Path(job.id);
-
-        match download(state, path).await {
-            Ok(_) => {}
-            Err(e) => assert_eq!(e, StatusCode::CREATED),
-        }
-    }
-
-    // ===== Additional upload error cases =====
 
     #[tokio::test]
     async fn test_upload_missing_user_id() {
-        let data_dir = tempdir().unwrap();
-        let mut config = Config::new().unwrap();
-        config.data_path = data_dir.path().to_str().unwrap().to_string();
-        config.services = HashMap::from([(
-            String::from("test-service"),
-            Service {
-                name: String::from("test-service"),
-                upload_url: String::from("http://localhost/upload"),
-                download_url: String::from("http://localhost/download"),
-                runs_per_user: 5,
-            },
-        )]);
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_routes(pool, config);
 
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        init_db(&pool).await.unwrap();
-        let state = AppState { pool, config };
+        let boundary = "testboundary123";
+        let body = build_multipart(
+            boundary,
+            &[
+                ("file", b"file content".as_slice(), Some("test.txt")),
+                ("service", b"test", None),
+            ],
+        );
 
-        let app = Router::new()
-            .route("/upload", post(upload))
-            .with_state(state);
-
-        let boundary = format!("----Boundary{}", Uuid::new_v4());
-        let mut body = Vec::new();
-        body.extend(form_field(&boundary, "service", "test-service"));
-        // Missing user_id field
-        body.extend(form_file(
-            &boundary,
-            "file",
-            "test.txt",
-            "application/octet-stream",
-            b"test data",
-        ));
-        body.extend(format!("--{boundary}--\r\n").as_bytes());
-
-        let req = Request::builder()
+        let request = Request::builder()
             .method("POST")
             .uri("/upload")
             .header(
-                header::CONTENT_TYPE,
+                "content-type",
                 format!("multipart/form-data; boundary={boundary}"),
             )
             .body(Body::from(body))
             .unwrap();
 
-        let response = app.oneshot(req).await.unwrap();
+        let response = app.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert!(body.message.contains("Missing user_id"));
     }
 
     #[tokio::test]
-    async fn test_upload_invalid_user_id_format() {
-        let data_dir = tempdir().unwrap();
-        let mut config = Config::new().unwrap();
-        config.data_path = data_dir.path().to_str().unwrap().to_string();
-        config.services = HashMap::from([(
-            String::from("test-service"),
-            Service {
-                name: String::from("test-service"),
-                upload_url: String::from("http://localhost/upload"),
-                download_url: String::from("http://localhost/download"),
-                runs_per_user: 5,
-            },
-        )]);
+    async fn test_upload_invalid_user_id() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_routes(pool, config);
 
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        init_db(&pool).await.unwrap();
-        let state = AppState { pool, config };
+        let boundary = "testboundary123";
+        let body = build_multipart(
+            boundary,
+            &[
+                ("file", b"file content".as_slice(), Some("test.txt")),
+                ("user_id", b"abc", None),
+                ("service", b"test", None),
+            ],
+        );
 
-        let app = Router::new()
-            .route("/upload", post(upload))
-            .with_state(state);
-
-        let boundary = format!("----Boundary{}", Uuid::new_v4());
-        let mut body = Vec::new();
-        body.extend(form_field(&boundary, "service", "test-service"));
-        body.extend(form_field(&boundary, "user_id", "not_a_number")); // Invalid user_id
-        body.extend(form_file(
-            &boundary,
-            "file",
-            "test.txt",
-            "application/octet-stream",
-            b"test data",
-        ));
-        body.extend(format!("--{boundary}--\r\n").as_bytes());
-
-        let req = Request::builder()
+        let request = Request::builder()
             .method("POST")
             .uri("/upload")
             .header(
-                header::CONTENT_TYPE,
+                "content-type",
                 format!("multipart/form-data; boundary={boundary}"),
             )
             .body(Body::from(body))
             .unwrap();
 
-        let response = app.oneshot(req).await.unwrap();
+        let response = app.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert!(body.message.contains("Invalid user_id"));
     }
 
     #[tokio::test]
     async fn test_upload_missing_service() {
-        let data_dir = tempdir().unwrap();
-        let mut config = Config::new().unwrap();
-        config.data_path = data_dir.path().to_str().unwrap().to_string();
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_routes(pool, config);
 
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        init_db(&pool).await.unwrap();
-        let state = AppState { pool, config };
+        let boundary = "testboundary123";
+        let body = build_multipart(
+            boundary,
+            &[
+                ("file", b"file content".as_slice(), Some("test.txt")),
+                ("user_id", b"1", None),
+            ],
+        );
 
-        let app = Router::new()
-            .route("/upload", post(upload))
-            .with_state(state);
-
-        let boundary = format!("----Boundary{}", Uuid::new_v4());
-        let mut body = Vec::new();
-        // Missing service field
-        body.extend(form_field(&boundary, "user_id", "42"));
-        body.extend(form_file(
-            &boundary,
-            "file",
-            "test.txt",
-            "application/octet-stream",
-            b"test data",
-        ));
-        body.extend(format!("--{boundary}--\r\n").as_bytes());
-
-        let req = Request::builder()
+        let request = Request::builder()
             .method("POST")
             .uri("/upload")
             .header(
-                header::CONTENT_TYPE,
+                "content-type",
                 format!("multipart/form-data; boundary={boundary}"),
             )
             .body(Body::from(body))
             .unwrap();
 
-        let response = app.oneshot(req).await.unwrap();
+        let response = app.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert!(body.message.contains("Missing service"));
     }
 
     #[tokio::test]
-    async fn test_upload_no_files() {
-        let data_dir = tempdir().unwrap();
-        let mut config = Config::new().unwrap();
-        config.data_path = data_dir.path().to_str().unwrap().to_string();
-        config.services = HashMap::from([(
-            String::from("test-service"),
-            Service {
-                name: String::from("test-service"),
-                upload_url: String::from("http://localhost/upload"),
-                download_url: String::from("http://localhost/download"),
-                runs_per_user: 5,
-            },
-        )]);
+    async fn test_upload_invalid_service() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_routes(pool, config);
 
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        init_db(&pool).await.unwrap();
-        let state = AppState { pool, config };
+        let boundary = "testboundary123";
+        let body = build_multipart(
+            boundary,
+            &[
+                ("file", b"file content".as_slice(), Some("test.txt")),
+                ("user_id", b"1", None),
+                ("service", b"unknownservice", None),
+            ],
+        );
 
-        let app = Router::new()
-            .route("/upload", post(upload))
-            .with_state(state);
-
-        let boundary = format!("----Boundary{}", Uuid::new_v4());
-        let mut body = Vec::new();
-        body.extend(form_field(&boundary, "service", "test-service"));
-        body.extend(form_field(&boundary, "user_id", "42"));
-        // No files, only text fields
-        body.extend(format!("--{boundary}--\r\n").as_bytes());
-
-        let req = Request::builder()
+        let request = Request::builder()
             .method("POST")
             .uri("/upload")
             .header(
-                header::CONTENT_TYPE,
+                "content-type",
                 format!("multipart/form-data; boundary={boundary}"),
             )
             .body(Body::from(body))
             .unwrap();
 
-        let response = app.oneshot(req).await.unwrap();
-        // Should succeed even with no files
-        assert_eq!(response.status(), StatusCode::OK);
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert!(body.message.contains("Invalid service"));
     }
 
     #[tokio::test]
-    async fn test_upload_special_characters_filename() {
-        let data_dir = tempdir().unwrap();
-        let mut config = Config::new().unwrap();
-        config.data_path = data_dir.path().to_str().unwrap().to_string();
-        config.services = HashMap::from([(
-            String::from("test-service"),
-            Service {
-                name: String::from("test-service"),
-                upload_url: String::from("http://localhost/upload"),
-                download_url: String::from("http://localhost/download"),
-                runs_per_user: 5,
-            },
-        )]);
+    async fn test_download_not_found() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_routes(pool, config);
 
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        init_db(&pool).await.unwrap();
-        let state = AppState { pool, config };
-
-        let app = Router::new()
-            .route("/upload", post(upload))
-            .with_state(state);
-
-        let boundary = format!("----Boundary{}", Uuid::new_v4());
-        let mut body = Vec::new();
-        body.extend(form_field(&boundary, "service", "test-service"));
-        body.extend(form_field(&boundary, "user_id", "42"));
-        // File with path traversal attempt
-        body.extend(form_file(
-            &boundary,
-            "file",
-            "../../etc/passwd",
-            "text/plain",
-            b"malicious content",
-        ));
-        body.extend(format!("--{boundary}--\r\n").as_bytes());
-
-        let req = Request::builder()
-            .method("POST")
-            .uri("/upload")
-            .header(
-                header::CONTENT_TYPE,
-                format!("multipart/form-data; boundary={boundary}"),
-            )
-            .body(Body::from(body))
+        let request = Request::builder()
+            .method("GET")
+            .uri("/download/9999")
+            .body(Body::empty())
             .unwrap();
 
-        let response = app.oneshot(req).await.unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            body.message.to_lowercase().contains("not found")
+                && body.message.contains("9999"),
+            "Expected 'not found' message mentioning job id, got: {}",
+            body.message
+        );
+    }
+
+    #[tokio::test]
+    async fn test_download_queued_job() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Queued, &pool).await.unwrap();
+        let job_id = job.id;
+
+        let app = create_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/download/{job_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body_bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
-        let job_loc = json["loc"].as_str().unwrap();
-
-        // Verify the file was sanitized and saved as "passwd" not in /etc
-        let saved_file = PathBuf::from(job_loc).join("passwd");
-        assert!(saved_file.exists());
-        assert!(saved_file.starts_with(data_dir.path()));
-    }
-
-    // ===== Additional download status tests =====
-
-    #[tokio::test]
-    async fn test_download_processing_job() {
-        let config = Config::new().unwrap();
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        init_db(&pool).await.unwrap();
-        let mut job = Job::new("");
-        job.add_to_db(&pool).await.unwrap();
-        job.update_status(Status::Processing, &pool).await.unwrap();
-
-        let state = State(AppState { pool, config });
-        let path = Path(job.id);
-
-        match download(state, path).await {
-            Ok(_) => panic!("Expected error"),
-            Err(e) => assert_eq!(e, StatusCode::CREATED),
-        }
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body.id, job_id);
+        assert_eq!(body.status, Status::Queued);
     }
 
     #[tokio::test]
-    async fn test_download_submitted_job() {
-        let config = Config::new().unwrap();
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        init_db(&pool).await.unwrap();
-        let mut job = Job::new("");
+    async fn test_download_running_job() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
         job.add_to_db(&pool).await.unwrap();
-        job.update_status(Status::Submitted, &pool).await.unwrap();
+        job.update_status(Status::Running, &pool).await.unwrap();
+        let job_id = job.id;
 
-        let state = State(AppState { pool, config });
-        let path = Path(job.id);
+        let app = create_routes(pool, config);
 
-        match download(state, path).await {
-            Ok(_) => panic!("Expected error"),
-            Err(e) => assert_eq!(e, StatusCode::ACCEPTED),
-        }
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/download/{job_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body.id, job_id);
+        assert_eq!(body.status, Status::Running);
     }
 
     #[tokio::test]
-    async fn test_download_prepared_job() {
-        let config = Config::new().unwrap();
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        init_db(&pool).await.unwrap();
-        let mut job = Job::new("");
+    async fn test_download_completed_job() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
         job.add_to_db(&pool).await.unwrap();
-        job.update_status(Status::Prepared, &pool).await.unwrap();
 
-        let state = State(AppState { pool, config });
-        let path = Path(job.id);
+        fs::create_dir_all(&job.loc).unwrap();
+        fs::write(job.loc.join("output.zip"), b"fake zip content").unwrap();
 
-        match download(state, path).await {
-            Ok(_) => panic!("Expected error"),
-            Err(e) => assert_eq!(e, StatusCode::CREATED),
-        }
+        job.update_status(Status::Completed, &pool).await.unwrap();
+        let job_id = job.id;
+
+        let app = create_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/download/{job_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert_eq!(content_type, "application/zip");
+
+        let bytes = body_bytes(response).await;
+        assert_eq!(&bytes[..], b"fake zip content");
     }
 
-    /// Unknown status indicates an unexpected/indeterminate state and should return
-    /// 500 INTERNAL_SERVER_ERROR to signal something went wrong.
     #[tokio::test]
-    async fn test_download_unknown_job_returns_internal_error() {
-        let config = Config::new().unwrap();
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        init_db(&pool).await.unwrap();
-        let mut job = Job::new("");
+    async fn test_download_completed_missing_file() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
         job.add_to_db(&pool).await.unwrap();
-        job.update_status(Status::Unknown, &pool).await.unwrap();
+        // No directory or output.zip created on disk
+        job.update_status(Status::Completed, &pool).await.unwrap();
+        let job_id = job.id;
 
-        let state = State(AppState { pool, config });
-        let path = Path(job.id);
+        let app = create_routes(pool, config);
 
-        match download(state, path).await {
-            Ok(_) => panic!("Expected error for unknown job"),
-            Err(e) => assert_eq!(
-                e,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Unknown status should return 500 INTERNAL_SERVER_ERROR"
-            ),
-        }
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/download/{job_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            body.message.contains("output file"),
+            "Expected error about output file, got: {}",
+            body.message
+        );
     }
 }

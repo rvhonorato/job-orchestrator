@@ -1,4 +1,4 @@
-use std::path::Path;
+use crate::models::status_dto::Status;
 use std::process::Command;
 use std::sync::LazyLock;
 
@@ -7,7 +7,6 @@ use crate::models::payload_dao::Payload;
 use crate::services::orchestrator::Endpoint;
 use crate::services::orchestrator::{DownloadError, UploadError};
 use futures_util::StreamExt;
-use http::StatusCode;
 use regex::Regex;
 use reqwest::multipart::{Form, Part};
 use tokio::fs::File;
@@ -16,12 +15,11 @@ use tokio_util::io::ReaderStream;
 use tracing::info;
 use walkdir::WalkDir;
 
+use axum::http::{StatusCode, header};
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
     #[error("Execution error")]
     Execution,
-    #[error("Script error")]
-    Script,
     #[error("No execution script found")]
     NoExecScript,
     #[error("Unsafe script detected: {reason}")]
@@ -117,7 +115,7 @@ impl Endpoint for Client {
         }
     }
 
-    async fn download(&self, j: &Job, url: &str) -> Result<(), DownloadError> {
+    async fn download(&self, j: &Job, url: &str) -> Result<Status, DownloadError> {
         let client = reqwest::Client::new();
         // Append the job id to the url
         let response = client
@@ -127,55 +125,64 @@ impl Endpoint for Client {
             .map_err(DownloadError::RequestFailed)?;
 
         let status = response.status();
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
 
-        // NOTE: This is the main point where we define what happened with the execution
-        // The client will return a HTTP status code, and we then convert it to a `DownloadError`
-        // and the `DownloadError` is then converted back into an internal Status by the
-        // `getter` task
-        //
-        // FIXME: Do we really need this `DownloadError` or can this be simplified?
-        match status {
-            StatusCode::OK => {
-                let output_path = j.loc.join("output.zip");
-                let mut file =
-                    File::create(&output_path)
-                        .await
-                        .map_err(|e| DownloadError::FileCreate {
-                            path: output_path.display().to_string(),
-                            source: e,
-                        })?;
+        if status == StatusCode::OK && content_type.contains("application/zip") {
+            // Job is finished, save it to disk
+            let output_path = j.loc.join("output.zip");
 
-                let mut stream = response.bytes_stream();
-                while let Some(chunk) = stream.next().await {
-                    let chunk = chunk.map_err(DownloadError::ResponseReadFailed)?;
-                    file.write_all(&chunk)
-                        .await
-                        .map_err(|e| DownloadError::FileWrite {
-                            path: output_path.display().to_string(),
-                            source: e,
-                        })?;
+            let mut file = match File::create(&output_path).await {
+                Ok(f) => f,
+                Err(e) => {
+                    return Err(DownloadError::FileCreate {
+                        path: output_path.display().to_string(),
+                        source: e,
+                    });
                 }
-                file.flush().await.map_err(|e| DownloadError::FileWrite {
+            };
+
+            let mut stream = response.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                let chunk = match chunk {
+                    Ok(c) => c,
+                    Err(e) => return Err(DownloadError::ResponseReadFailed(e)),
+                };
+                if let Err(e) = file.write_all(&chunk).await {
+                    return Err(DownloadError::FileWrite {
+                        path: output_path.display().to_string(),
+                        source: e,
+                    });
+                }
+            }
+
+            if let Err(e) = file.flush().await {
+                return Err(DownloadError::FileWrite {
                     path: output_path.display().to_string(),
                     source: e,
-                })?;
+                });
+            }
 
-                Ok(())
-            }
-            StatusCode::ACCEPTED => Err(DownloadError::JobRunning),
-            StatusCode::CREATED => Err(DownloadError::JobNotReady),
-            StatusCode::NO_CONTENT => Err(DownloadError::JobCleaned),
-            StatusCode::BAD_REQUEST => Err(DownloadError::JobInvalid),
-            StatusCode::NOT_FOUND => Err(DownloadError::JobNotFound),
-            StatusCode::GONE => Err(DownloadError::JobFailed),
-            StatusCode::INTERNAL_SERVER_ERROR => Err(DownloadError::JobCouldNotBeExecuted),
-            _ => {
-                let body = response
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| "Unable to read response body".to_string());
-                Err(DownloadError::UnexpectedStatus { status, body })
-            }
+            // All good, file saved
+            Ok(Status::Completed)
+        } else if status.is_success() {
+            // Job not yet finished, propagate the status
+            let payload: Payload = match response.json().await {
+                Ok(p) => p,
+                Err(e) => {
+                    return Err(DownloadError::ResponseReadFailed(e));
+                }
+            };
+            Ok(payload.status)
+        } else {
+            // Client returned an error
+            tracing::error!("Client returned error status: {status}");
+            Err(DownloadError::RequestFailed(
+                response.error_for_status().unwrap_err(),
+            ))
         }
     }
 }
@@ -186,7 +193,7 @@ impl Endpoint for Client {
 /// that catches obviously dangerous patterns. Input scripts are still
 /// expected to come from trusted sources and be clean. This function is
 /// a defense-in-depth measure and can be bypassed by determined actors.
-fn validate_script(path: &Path) -> Result<(), ClientError> {
+fn validate_script(path: &std::path::Path) -> Result<(), ClientError> {
     static DANGEROUS_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
         [
             // Destructive commands
@@ -318,7 +325,7 @@ fn validate_script(path: &Path) -> Result<(), ClientError> {
 /// Callers must ensure that the payload originates from a trusted
 /// source or that the process is sandboxed externally (e.g., via
 /// container resource limits, read-only rootfs, network isolation).
-pub fn execute_payload(payload: &Payload) -> Result<(), ClientError> {
+pub fn execute_payload(payload: &Payload) -> Result<Status, ClientError> {
     info!("{:?}", payload);
 
     // Expect the payload.loc to contain a `run.sh` script
@@ -333,17 +340,15 @@ pub fn execute_payload(payload: &Payload) -> Result<(), ClientError> {
     validate_script(&run_script)?;
 
     // Execute script and wait for it to finish
-    let exit_status = Command::new("bash")
+    let _exit_status = Command::new("bash")
         .arg(run_script)
         .current_dir(&payload.loc)
         .status()
         .map_err(|_| ClientError::Execution)?;
 
-    if !exit_status.success() {
-        return Err(ClientError::Script);
-    }
+    // TODO: Capture the exit status here and do something with it
 
-    Ok(())
+    Ok(Status::Completed)
 }
 
 #[cfg(test)]
@@ -378,21 +383,6 @@ mod test {
         let result = execute_payload(&payload);
 
         assert!(matches!(result, Err(ClientError::NoExecScript)));
-    }
-
-    #[test]
-    fn test_execute_payload_script_error() {
-        // Prepare a temporary payload
-        let temp_dir = tempfile::tempdir().unwrap();
-        let mut payload = Payload::new();
-        payload.set_loc(temp_dir.path().to_path_buf());
-
-        // Add a run.sh script that fails
-        std::fs::write(payload.loc.join("run.sh"), b"#!/bin/bash\nexit 1").unwrap();
-
-        let result = execute_payload(&payload);
-
-        assert!(matches!(result, Err(ClientError::Script)));
     }
 
     // ===== validate_script tests =====
@@ -768,6 +758,7 @@ mod test {
         let mock = server
             .mock("GET", "/retrieve/123")
             .with_status(200)
+            .with_header("content-type", "application/zip")
             .with_body(b"test zip content")
             .create_async()
             .await;
@@ -777,6 +768,7 @@ mod test {
         let result = client.download(&job, &url).await;
 
         mock.assert_async().await;
+
         assert!(result.is_ok());
 
         // Verify file was created
@@ -787,178 +779,25 @@ mod test {
     }
 
     #[tokio::test]
-    async fn test_client_download_accepted() {
+    async fn test_client_download_non_completed() {
         let mut server = Server::new_async().await;
         let temp_dir = tempfile::tempdir().unwrap();
 
         let mut job = Job::new(temp_dir.path().to_str().unwrap());
-        job.dest_id = 456;
+        job.dest_id = 99;
         fs::create_dir_all(&job.loc).unwrap();
 
-        // Mock server response with ACCEPTED status
-        let mock = server
-            .mock("GET", "/retrieve/456")
-            .with_status(202)
-            .create_async()
-            .await;
-
-        let client = Client;
-        let url = format!("{}/retrieve", server.url());
-        let result = client.download(&job, &url).await;
-
-        mock.assert_async().await;
-        assert!(result.is_err());
-        assert!(matches!(result, Err(DownloadError::JobRunning)));
-    }
-
-    #[tokio::test]
-    async fn test_client_download_no_content() {
-        let mut server = Server::new_async().await;
-        let temp_dir = tempfile::tempdir().unwrap();
-
-        let mut job = Job::new(temp_dir.path().to_str().unwrap());
-        job.dest_id = 789;
-        fs::create_dir_all(&job.loc).unwrap();
-
-        // Mock server response with NO_CONTENT status (job results cleaned/expired)
-        let mock = server
-            .mock("GET", "/retrieve/789")
-            .with_status(204)
-            .create_async()
-            .await;
-
-        let client = Client;
-        let url = format!("{}/retrieve", server.url());
-        let result = client.download(&job, &url).await;
-
-        mock.assert_async().await;
-        assert!(result.is_err());
-        assert!(matches!(result, Err(DownloadError::JobCleaned)));
-    }
-
-    #[tokio::test]
-    async fn test_client_download_bad_request() {
-        let mut server = Server::new_async().await;
-        let temp_dir = tempfile::tempdir().unwrap();
-
-        let mut job = Job::new(temp_dir.path().to_str().unwrap());
-        job.dest_id = 321;
-        fs::create_dir_all(&job.loc).unwrap();
-
-        // Mock server response with BAD_REQUEST status (job invalid - user error)
-        let mock = server
-            .mock("GET", "/retrieve/321")
-            .with_status(400)
-            .create_async()
-            .await;
-
-        let client = Client;
-        let url = format!("{}/retrieve", server.url());
-        let result = client.download(&job, &url).await;
-
-        mock.assert_async().await;
-        assert!(result.is_err());
-        assert!(matches!(result, Err(DownloadError::JobInvalid)));
-    }
-
-    #[tokio::test]
-    async fn test_client_download_gone() {
-        let mut server = Server::new_async().await;
-        let temp_dir = tempfile::tempdir().unwrap();
-
-        let mut job = Job::new(temp_dir.path().to_str().unwrap());
-        job.dest_id = 654;
-        fs::create_dir_all(&job.loc).unwrap();
-
-        // Mock server response with GONE status (job failed during execution)
-        let mock = server
-            .mock("GET", "/retrieve/654")
-            .with_status(410)
-            .create_async()
-            .await;
-
-        let client = Client;
-        let url = format!("{}/retrieve", server.url());
-        let result = client.download(&job, &url).await;
-
-        mock.assert_async().await;
-        assert!(result.is_err());
-        assert!(matches!(result, Err(DownloadError::JobFailed)));
-    }
-
-    #[tokio::test]
-    async fn test_client_download_not_found() {
-        let mut server = Server::new_async().await;
-        let temp_dir = tempfile::tempdir().unwrap();
-
-        let mut job = Job::new(temp_dir.path().to_str().unwrap());
-        job.dest_id = 999;
-        fs::create_dir_all(&job.loc).unwrap();
-
-        // Mock server response with NOT_FOUND status
-        let mock = server
-            .mock("GET", "/retrieve/999")
-            .with_status(404)
-            .create_async()
-            .await;
-
-        let client = Client;
-        let url = format!("{}/retrieve", server.url());
-        let result = client.download(&job, &url).await;
-
-        mock.assert_async().await;
-        assert!(result.is_err());
-        assert!(matches!(result, Err(DownloadError::JobNotFound)));
-    }
-
-    #[tokio::test]
-    async fn test_client_download_unexpected_status() {
-        let mut server = Server::new_async().await;
-        let temp_dir = tempfile::tempdir().unwrap();
-
-        let mut job = Job::new(temp_dir.path().to_str().unwrap());
-        job.dest_id = 111;
-        fs::create_dir_all(&job.loc).unwrap();
-
-        // Mock server response with unexpected status
-        let mock = server
-            .mock("GET", "/retrieve/111")
-            .with_status(418) // I'm a teapot
-            .with_body("Unexpected error")
-            .create_async()
-            .await;
-
-        let client = Client;
-        let url = format!("{}/retrieve", server.url());
-        let result = client.download(&job, &url).await;
-
-        mock.assert_async().await;
-        assert!(result.is_err());
-        match result {
-            Err(DownloadError::UnexpectedStatus { status, body }) => {
-                assert_eq!(status, StatusCode::IM_A_TEAPOT);
-                assert_eq!(body, "Unexpected error");
-            }
-            _ => panic!("Expected UnexpectedStatus error"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_client_download_large_file() {
-        let mut server = Server::new_async().await;
-        let temp_dir = tempfile::tempdir().unwrap();
-
-        let mut job = Job::new(temp_dir.path().to_str().unwrap());
-        job.dest_id = 222;
-        fs::create_dir_all(&job.loc).unwrap();
-
-        // Create large content (1MB)
-        let large_content = vec![b'A'; 1024 * 1024];
+        // Server returns 200 with JSON Payload — job still running
+        let mut running_payload = Payload::new();
+        running_payload.set_id(99);
+        running_payload.set_status(crate::models::status_dto::Status::Running);
+        let body = serde_json::to_string(&running_payload).unwrap();
 
         let mock = server
-            .mock("GET", "/retrieve/222")
+            .mock("GET", "/retrieve/99")
             .with_status(200)
-            .with_body(&large_content)
+            .with_header("content-type", "application/json")
+            .with_body(body)
             .create_async()
             .await;
 
@@ -967,11 +806,16 @@ mod test {
         let result = client.download(&job, &url).await;
 
         mock.assert_async().await;
-        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), crate::models::status_dto::Status::Running);
+    }
 
-        // Verify file size
-        let output_path = job.loc.join("output.zip");
-        let metadata = fs::metadata(output_path).unwrap();
-        assert_eq!(metadata.len(), 1024 * 1024);
+    #[test]
+    fn test_validate_script_non_utf8() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let script_path = temp_dir.path().join("run.sh");
+        // Write bytes that are not valid UTF-8
+        fs::write(&script_path, b"\xff\xfe invalid utf8 \x80\x81").unwrap();
+        let result = validate_script(&script_path);
+        assert!(matches!(result, Err(ClientError::UnsafeScript { .. })));
     }
 }

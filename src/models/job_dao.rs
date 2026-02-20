@@ -29,11 +29,11 @@ impl Job {
         }
     }
 
-    pub fn download(self) -> Vec<u8> {
-        let mut file = fs::File::open(self.loc.join("output.zip")).unwrap();
+    pub fn download(self) -> Result<Vec<u8>, std::io::Error> {
+        let mut file = fs::File::open(self.loc.join("output.zip"))?;
         let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer).unwrap();
-        buffer
+        file.read_to_end(&mut buffer)?;
+        Ok(buffer)
     }
 
     pub fn remove_from_disk(&self) -> Result<(), std::io::Error> {
@@ -66,7 +66,7 @@ mod test {
         let test_data = b"test content".to_vec();
         fs::write(job.loc.join("output.zip"), &test_data).unwrap();
 
-        let result = job.download();
+        let result = job.download().unwrap();
         assert_eq!(result, test_data);
     }
 
