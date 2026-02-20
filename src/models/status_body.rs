@@ -1,8 +1,8 @@
 use crate::models::status_dto::Status;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-#[derive(Serialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct StatusBody {
     pub id: i32,
     pub status: Status,
