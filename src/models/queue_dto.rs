@@ -41,6 +41,7 @@ impl Queue<'_> {
         self.jobs = jobs;
         Ok(())
     }
+
     pub async fn load(&mut self, pool: &SqlitePool) -> Result<(), sqlx::Error> {
         // ===========================================================================================
         // Step 1: Get all QUEUED jobs

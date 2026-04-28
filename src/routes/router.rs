@@ -79,7 +79,7 @@ pub fn create_client_routes(pool: SqlitePool, config: Config) -> Router {
         .route("/load", get(load))
         .route("/submit", post(submit))
         .route("/retrieve/{id}", get(retrieve))
-        .route("/kill/{id}", get(kill))
+        .route("/kill/{id}", post(kill))
         .with_state(state)
         .layer(
             TraceLayer::new_for_http()

@@ -106,11 +106,18 @@ async fn start_client(config: Config) -> anyhow::Result<()> {
     // Initialize database
     let pool = datasource::db::init_payload_db(&config.db_path).await;
 
-    // Create a scheduled job
+    // Create the runner task
     let runner_task = every(500).millisecond().perform(|| {
         let pool_clone = pool.clone();
         let config_clone = config.clone();
         async move { client::runner(pool_clone, config_clone).await }
+    });
+
+    // Create the updater task
+    let updater_task = every(500).millisecond().perform(|| {
+        let pool_clone = pool.clone();
+        let config_clone = config.clone();
+        async move { client::updater(pool_clone, config_clone).await }
     });
 
     // Create app
@@ -124,6 +131,7 @@ async fn start_client(config: Config) -> anyhow::Result<()> {
 
     tokio::select! {
         _ = runner_task => {},
+        _ = updater_task => {},
         _ = axum::serve(listener, client_app.into_make_service()) => {},
     };
 

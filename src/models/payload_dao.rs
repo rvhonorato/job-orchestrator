@@ -1,9 +1,10 @@
 use crate::models::status_dto::Status;
+use crate::services::client::ClientError;
 use crate::utils;
+use crate::utils::sys::ManagedProcess;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 use utoipa::ToSchema;
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, ToSchema)]
@@ -13,7 +14,8 @@ pub struct Payload {
     pub status: Status,
     #[schema(value_type = String)]
     pub loc: PathBuf,
-    pub pid: u32,
+    #[serde(skip_serializing, skip_deserializing)]
+    process: Option<ManagedProcess>,
 }
 
 impl Payload {
@@ -23,7 +25,7 @@ impl Payload {
             input: HashMap::new(),
             status: Status::Unknown,
             loc: PathBuf::new(),
-            pid: 0,
+            process: None,
         }
     }
 
@@ -71,10 +73,29 @@ impl Payload {
         std::fs::read(&result)
     }
 
-    pub fn kill(self) -> Result<(), std::io::Error> {
-        Command::new("kill").arg(self.pid.to_string()).status()?;
+    pub fn execute(&mut self) -> Result<(), ClientError> {
+        let run_script = self.loc.join("run.sh");
+        utils::io::validate_script(&run_script)?;
+        let proc = ManagedProcess::new(&self.loc).map_err(|_| ClientError::Execution)?;
+
+        self.process = Some(proc);
 
         Ok(())
+    }
+
+    pub fn kill(&mut self) -> std::io::Result<()> {
+        if let Some(process) = &mut self.process {
+            process.kill()?;
+        }
+        Ok(())
+    }
+
+    pub fn is_running(&mut self) -> bool {
+        self.process.as_mut().is_some_and(|p| p.is_running())
+    }
+
+    pub fn status_code(&mut self) -> Option<i32> {
+        self.process.as_mut().and_then(|p| p.get_exit_status())
     }
 }
 

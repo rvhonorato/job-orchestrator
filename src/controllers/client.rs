@@ -133,11 +133,11 @@ pub async fn load() -> Json<f32> {
     get,
     path = "/kill/{id}",
     params(
-    ("id" = i32, Path, description = "placeholder")
+    ("id" = i32, Path, description = "ID of payload to be terminated")
     )
 )]
 pub async fn kill(State(state): State<AppState>, Path(id): Path<u32>) -> Response {
-    let payload = match Payload::retrieve_id(id, &state.pool).await {
+    let mut payload = match Payload::retrieve_id(id, &state.pool).await {
         Ok(p) => p,
         Err(e) => {
             let status = match e {

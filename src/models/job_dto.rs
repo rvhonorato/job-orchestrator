@@ -15,7 +15,6 @@ pub async fn create_jobs_table(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             loc TEXT NOT NULL,
             dest_id INTEGER,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            pid INTEGER
         )
     "#,
     )
