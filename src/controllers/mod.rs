@@ -1,4 +1,4 @@
 pub mod client;
 pub mod health;
-pub mod orchestrator;
 pub mod ping;
+pub mod server;

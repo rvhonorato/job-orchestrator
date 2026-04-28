@@ -10,10 +10,10 @@ use crate::routes::router::create_routes;
 use crate::{datasource::db::init_db, routes::router::create_client_routes};
 use clap::{Parser, Subcommand};
 use config::loader::Config;
-use services::tasks::{cleaner, getter, runner, sender};
+use services::{client, server};
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
-use tokio_schedule::{every, Job};
+use tokio_schedule::{Job, every};
 
 #[derive(Parser, Debug)]
 struct Cli {
@@ -68,19 +68,19 @@ async fn start_server(config: Config) -> anyhow::Result<()> {
     let sender_task = every(500).millisecond().perform(|| {
         let pool_clone = pool.clone();
         let config_clone = config.clone();
-        async move { sender(pool_clone, config_clone).await }
+        async move { server::sender(pool_clone, config_clone).await }
     });
 
     let getter_task = every(500).millisecond().perform(|| {
         let pool_clone = pool.clone();
         let config_clone = config.clone();
-        async move { getter(pool_clone, config_clone).await }
+        async move { server::getter(pool_clone, config_clone).await }
     });
 
     let cleaner_task = every(60).second().perform(|| {
         let pool_clone = pool.clone();
         let config_clone = config.clone();
-        async move { cleaner(pool_clone, config_clone).await }
+        async move { server::cleaner(pool_clone, config_clone).await }
     });
 
     // Create app
@@ -110,7 +110,7 @@ async fn start_client(config: Config) -> anyhow::Result<()> {
     let runner_task = every(500).millisecond().perform(|| {
         let pool_clone = pool.clone();
         let config_clone = config.clone();
-        async move { runner(pool_clone, config_clone).await }
+        async move { client::runner(pool_clone, config_clone).await }
     });
 
     // Create app

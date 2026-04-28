@@ -14,7 +14,8 @@ pub async fn create_jobs_table(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             status TEXT NOT NULL,
             loc TEXT NOT NULL,
             dest_id INTEGER,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            pid INTEGER
         )
     "#,
     )
@@ -35,7 +36,7 @@ impl Job {
                 .await?;
 
         let job_id = result.last_insert_rowid();
-        self.id = job_id as i32;
+        self.id = job_id as u32;
 
         Ok(())
     }
@@ -72,7 +73,7 @@ impl Job {
         Ok(())
     }
 
-    pub async fn retrieve_id(&mut self, id: i32, pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    pub async fn retrieve_id(&mut self, id: u32, pool: &SqlitePool) -> Result<(), sqlx::Error> {
         let row = sqlx::query("SELECT * FROM jobs WHERE id = ?")
             .bind(id)
             .fetch_optional(pool)

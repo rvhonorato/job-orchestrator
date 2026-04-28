@@ -7,13 +7,14 @@ use uuid::Uuid;
 
 #[derive(serde::Serialize, Debug, ToSchema)]
 pub struct Job {
-    pub id: i32,
+    pub id: u32,
     pub user_id: i32,
     pub service: String,
     pub status: Status,
     #[schema(value_type = String)]
     pub loc: PathBuf,
     pub dest_id: u32,
+    pub pid: u32,
 }
 
 impl Job {
@@ -26,6 +27,7 @@ impl Job {
             status: Status::Unknown,
             loc,
             dest_id: 0,
+            pid: 0,
         }
     }
 
@@ -46,6 +48,10 @@ impl Job {
 
     pub fn set_user_id(&mut self, user_id: i32) {
         self.user_id = user_id;
+    }
+
+    pub fn get_status(&self) -> Status {
+        self.status
     }
 }
 

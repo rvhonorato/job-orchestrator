@@ -4,8 +4,8 @@ use std::sync::LazyLock;
 
 use crate::models::job_dao::Job;
 use crate::models::payload_dao::Payload;
-use crate::services::orchestrator::Endpoint;
-use crate::services::orchestrator::{DownloadError, UploadError};
+use crate::services::endpoint::{DownloadError, UploadError};
+use crate::services::endpoint::{Endpoint, TerminateError};
 use futures_util::StreamExt;
 use regex::Regex;
 use reqwest::multipart::{Form, Part};
@@ -15,7 +15,12 @@ use tokio_util::io::ReaderStream;
 use tracing::info;
 use walkdir::WalkDir;
 
+use crate::config::loader::Config;
+use crate::models::queue_dao::PayloadQueue;
 use axum::http::{StatusCode, header};
+use sqlx::SqlitePool;
+use tracing::error;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
     #[error("Execution error")]
@@ -28,7 +33,6 @@ pub enum ClientError {
 
 pub struct Client;
 
-// Server side
 impl Endpoint for Client {
     async fn upload(&self, job: &Job, url: &str) -> Result<u32, UploadError> {
         // Create multipart form
@@ -185,6 +189,27 @@ impl Endpoint for Client {
             ))
         }
     }
+
+    async fn terminate(&self, j: &Job, url: &str) -> Result<(), TerminateError> {
+        // Make the request to the client
+        let client = reqwest::Client::new();
+        let response = client.post(format!("{url}/{0}", j.id)).send().await;
+
+        match response {
+            Ok(r) => {
+                if r.status().is_success() {
+                    // job was terminated - all ok
+                    Ok(())
+                } else {
+                    Err(TerminateError::HttpError(r.status()))
+                }
+            }
+            Err(e) => {
+                error!("termination request failed: {}", e);
+                Err(TerminateError::GenericError)
+            }
+        }
+    }
 }
 
 /// Validate a script for dangerous patterns before execution.
@@ -325,8 +350,12 @@ fn validate_script(path: &std::path::Path) -> Result<(), ClientError> {
 /// Callers must ensure that the payload originates from a trusted
 /// source or that the process is sandboxed externally (e.g., via
 /// container resource limits, read-only rootfs, network isolation).
-pub fn execute_payload(payload: &Payload) -> Result<Status, ClientError> {
+pub fn execute_payload(payload: &Payload) -> Result<u32, ClientError> {
     info!("{:?}", payload);
+
+    if !payload.loc.exists() {
+        return Err(ClientError::Execution);
+    }
 
     // Expect the payload.loc to contain a `run.sh` script
     let run_script = payload.loc.join("run.sh");
@@ -340,15 +369,48 @@ pub fn execute_payload(payload: &Payload) -> Result<Status, ClientError> {
     validate_script(&run_script)?;
 
     // Execute script and wait for it to finish
-    let _exit_status = Command::new("bash")
+    let child = Command::new("bash")
         .arg(run_script)
         .current_dir(&payload.loc)
-        .status()
+        .spawn()
         .map_err(|_| ClientError::Execution)?;
 
-    // TODO: Capture the exit status here and do something with it
+    let pid = child.id();
 
-    Ok(Status::Completed)
+    Ok(pid)
+}
+
+pub async fn runner(pool: SqlitePool, config: Config) {
+    let mut queue = PayloadQueue::new(&config);
+    if queue.list_per_status(Status::Prepared, &pool).await.is_ok() {
+        let futures = queue
+            .jobs
+            .into_iter()
+            .map(|mut j| {
+                let pool_clone = pool.clone();
+                tokio::spawn(async move {
+                    // Mark the job as running, without this status it will stay in `Processing`
+                    j.update_status(Status::Running, &pool_clone).await.ok();
+
+                    match execute_payload(&j) {
+                        Ok(pid) => j.update_pid(pid, &pool_clone).await.ok(),
+                        Err(e) => {
+                            error!("There was an error while executing the payload: {e}");
+                            let status = match e {
+                                ClientError::NoExecScript | ClientError::UnsafeScript { .. } => {
+                                    Status::Invalid
+                                }
+                                ClientError::Execution => Status::Failed,
+                            };
+                            j.update_status(status, &pool_clone).await.ok()
+                        }
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        futures::future::join_all(futures).await;
+    }
 }
 
 #[cfg(test)]
@@ -357,6 +419,7 @@ mod test {
     use super::*;
     use mockito::Server;
     use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn test_execute_payload() {
@@ -817,5 +880,110 @@ mod test {
         fs::write(&script_path, b"\xff\xfe invalid utf8 \x80\x81").unwrap();
         let result = validate_script(&script_path);
         assert!(matches!(result, Err(ClientError::UnsafeScript { .. })));
+    }
+
+    #[tokio::test]
+    async fn test_runner() {
+        // Initialize pool
+        let tempdir = TempDir::new().unwrap();
+        let db_path = tempdir.path().join("test.db");
+        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
+        // Initialize config
+        let mut config = Config::new().unwrap();
+        // config.data_path = tempdir.path().to_str().unwrap().to_string();
+        config.data_path = "/home/rodrigo/repos/job-orchestrator/DEBUG".to_string();
+
+        // Add a payload
+        let mut payload = Payload::new();
+        payload
+            .add_to_db(&pool)
+            .await
+            .expect("Failed to add payload to DB");
+
+        // Add input data
+        let data = b"#!/bin/bash\necho 'Hello, World!' > output.txt\n";
+        payload.add_input("run.sh".to_string(), data.to_vec());
+
+        // Prepare the payload
+        payload
+            .prepare(&config.data_path)
+            .expect("Failed to prepare payload");
+
+        // Update loc in database after prepare
+        payload
+            .update_loc(&pool)
+            .await
+            .expect("Failed to update payload loc");
+
+        // Mark as prepared
+        payload
+            .update_status(Status::Prepared, &pool)
+            .await
+            .expect("Failed to update payload status");
+
+        assert!(payload.loc.exists());
+
+        // Run the runner
+        runner(pool.clone(), config).await;
+
+        // Check the effects
+        let mut _payload = Payload::retrieve_id(payload.id, &pool)
+            .await
+            .expect("Failed to retrieve payload");
+
+        assert_eq!(_payload.status, Status::Running);
+
+        let expected_output = _payload.loc.join("output.txt");
+        assert!(expected_output.exists());
+    }
+
+    /// When run.sh is missing, the job should be marked as Invalid (user error).
+    #[tokio::test]
+    async fn test_runner_no_script_sets_invalid() {
+        // Initialize pool
+        let tempdir = TempDir::new().unwrap();
+        let db_path = tempdir.path().join("test.db");
+        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
+        // Initialize config with tempdir
+        let mut config = Config::new().unwrap();
+        config.data_path = tempdir.path().to_str().unwrap().to_string();
+
+        // Add a payload WITHOUT a run.sh script
+        let mut payload = Payload::new();
+        payload
+            .add_to_db(&pool)
+            .await
+            .expect("Failed to add payload to DB");
+
+        // Add some other file, but NOT run.sh
+        payload.add_input("data.txt".to_string(), b"some data".to_vec());
+
+        // Prepare the payload
+        payload
+            .prepare(&config.data_path)
+            .expect("Failed to prepare payload");
+
+        // Update loc in database after prepare
+        payload
+            .update_loc(&pool)
+            .await
+            .expect("Failed to update payload loc");
+
+        // Mark as prepared
+        payload
+            .update_status(Status::Prepared, &pool)
+            .await
+            .expect("Failed to update payload status");
+
+        // Run the runner with the same config
+        runner(pool.clone(), config).await;
+
+        // Check the effects
+        let _payload = Payload::retrieve_id(payload.id, &pool)
+            .await
+            .expect("Failed to retrieve payload");
+
+        // No run.sh = user error = Invalid status
+        assert_eq!(_payload.status, Status::Invalid);
     }
 }

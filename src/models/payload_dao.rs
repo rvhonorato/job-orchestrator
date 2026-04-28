@@ -3,6 +3,7 @@ use crate::utils;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 use utoipa::ToSchema;
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, ToSchema)]
@@ -12,6 +13,7 @@ pub struct Payload {
     pub status: Status,
     #[schema(value_type = String)]
     pub loc: PathBuf,
+    pub pid: u32,
 }
 
 impl Payload {
@@ -21,6 +23,7 @@ impl Payload {
             input: HashMap::new(),
             status: Status::Unknown,
             loc: PathBuf::new(),
+            pid: 0,
         }
     }
 
@@ -66,6 +69,12 @@ impl Payload {
 
         // Read the output.zip file and return its content
         std::fs::read(&result)
+    }
+
+    pub fn kill(self) -> Result<(), std::io::Error> {
+        Command::new("kill").arg(self.pid.to_string()).status()?;
+
+        Ok(())
     }
 }
 

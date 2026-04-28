@@ -16,6 +16,8 @@ pub enum Status {
     Failed,     // Job failed
     Invalid,    // Job invalid
     Unknown,    // Wildcard
+    Locked,     // Job is being handled
+    Killed,     // Job was manually killed
 }
 
 impl fmt::Display for Status {
@@ -31,6 +33,8 @@ impl fmt::Display for Status {
             Status::Unknown => write!(f, "unknown"),
             Status::Cleaned => write!(f, "cleaned"),
             Status::Running => write!(f, "running"),
+            Status::Locked => write!(f, "locked"),
+            Status::Killed => write!(f, "killed"),
         }
     }
 }
@@ -47,6 +51,8 @@ impl Status {
             "cleaned" => Status::Cleaned,
             "prepared" => Status::Prepared,
             "running" => Status::Running,
+            "locked" => Status::Locked,
+            "killed" => Status::Killed,
             _ => Status::Unknown,
         }
     }
@@ -223,12 +229,5 @@ mod tests {
         assert_eq!(Status::Completed, Status::Completed);
         assert_ne!(Status::Queued, Status::Processing);
         assert_ne!(Status::Completed, Status::Failed);
-    }
-
-    #[test]
-    fn test_status_clone() {
-        let status = Status::Processing;
-        let cloned = status.clone();
-        assert_eq!(status, cloned);
     }
 }

@@ -19,6 +19,7 @@ pub struct Service {
     pub name: String,
     pub upload_url: String,
     pub download_url: String,
+    pub terminate_url: String,
     pub runs_per_user: u16,
 }
 
@@ -32,6 +33,7 @@ impl Config {
             // - SERVICE_<NAME>_UPLOAD_URL
             // - SERVICE_<NAME>_DOWNLOAD_URL
             // - SERVICE_<NAME>_RUNS_PER_USER
+            // - SERVICE_<NAME>_TERMINATE_URL
             if key.starts_with("SERVICE_") {
                 let parts: Vec<&str> = key.split('_').collect();
                 if parts.len() >= 3 {
@@ -45,6 +47,7 @@ impl Config {
                             name: service_name.to_string().to_ascii_lowercase(),
                             upload_url: String::new(),
                             download_url: String::new(),
+                            terminate_url: String::new(),
                             runs_per_user: 5, // by default consider 5 runs per user per service
                         });
 
@@ -53,6 +56,7 @@ impl Config {
                         "UPLOAD_URL" => service.upload_url = value,
                         "DOWNLOAD_URL" => service.download_url = value,
                         "RUNS_PER_USER" => service.runs_per_user = value.parse::<u16>().unwrap(),
+                        "TERMINATE_URL" => service.terminate_url = value,
                         _ => continue,
                     };
                 }
@@ -123,6 +127,12 @@ impl Config {
             .get(service_name)
             .map(|service| service.upload_url.as_str())
     }
+
+    pub fn get_terminate_url(&self, service_name: &str) -> Option<&str> {
+        self.services
+            .get(service_name)
+            .map(|service| service.terminate_url.as_str())
+    }
 }
 
 #[cfg(test)]
@@ -140,6 +150,7 @@ mod tests {
                 name: "test".to_string(),
                 upload_url: "http://test.com/upload".to_string(),
                 download_url: "http://test.com/download".to_string(),
+                terminate_url: "http://example.com/terminate".to_string(),
                 runs_per_user: 10,
             },
         );
@@ -161,6 +172,7 @@ mod tests {
             name: "test".to_string(),
             upload_url: "http://example.com/upload".to_string(),
             download_url: "http://example.com/download".to_string(),
+            terminate_url: "http://example.com/terminate".to_string(),
             runs_per_user: 5,
         };
 
@@ -244,6 +256,7 @@ mod tests {
                 name: "service1".to_string(),
                 upload_url: "http://s1.com/upload".to_string(),
                 download_url: "http://s1.com/download".to_string(),
+                terminate_url: "http://s1.com/terminate".to_string(),
                 runs_per_user: 5,
             },
         );
@@ -254,6 +267,7 @@ mod tests {
                 name: "service2".to_string(),
                 upload_url: "http://s2.com/upload".to_string(),
                 download_url: "http://s2.com/download".to_string(),
+                terminate_url: "http://s2.com/terminate".to_string(),
                 runs_per_user: 10,
             },
         );
@@ -386,7 +400,10 @@ mod tests {
         // SAFETY: serial test — no concurrent env mutation
         unsafe {
             env::set_var("SERVICE_UPPERCASE_UPLOAD_URL", "http://upper.com/upload");
-            env::set_var("SERVICE_UPPERCASE_DOWNLOAD_URL", "http://upper.com/download");
+            env::set_var(
+                "SERVICE_UPPERCASE_DOWNLOAD_URL",
+                "http://upper.com/download",
+            );
         }
         let config = Config::new().unwrap();
         cleanup_env(&[

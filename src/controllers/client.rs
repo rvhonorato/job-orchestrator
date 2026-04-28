@@ -129,6 +129,31 @@ pub async fn load() -> Json<f32> {
     Json(sys.global_cpu_usage())
 }
 
+#[utoipa::path(
+    get,
+    path = "/kill/{id}",
+    params(
+    ("id" = i32, Path, description = "placeholder")
+    )
+)]
+pub async fn kill(State(state): State<AppState>, Path(id): Path<u32>) -> Response {
+    let payload = match Payload::retrieve_id(id, &state.pool).await {
+        Ok(p) => p,
+        Err(e) => {
+            let status = match e {
+                sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            return (status, Json(Payload::new())).into_response();
+        }
+    };
+
+    match payload.kill() {
+        Ok(_) => (StatusCode::OK).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR).into_response(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::config::loader::{Config, Service};
@@ -158,6 +183,7 @@ mod tests {
                 name: "test".to_string(),
                 upload_url: "http://example.com/upload".to_string(),
                 download_url: "http://example.com/download".to_string(),
+                terminate_url: "http://example.com/terminate".to_string(),
                 runs_per_user: 5,
             },
         );
@@ -258,7 +284,10 @@ mod tests {
 
         let mut payload = Payload::new();
         payload.add_to_db(&pool).await.unwrap();
-        payload.update_status(Status::Prepared, &pool).await.unwrap();
+        payload
+            .update_status(Status::Prepared, &pool)
+            .await
+            .unwrap();
         let payload_id = payload.id;
 
         let app = create_client_routes(pool, config);
@@ -294,7 +323,10 @@ mod tests {
 
         payload.set_loc(payload_dir);
         payload.update_loc(&pool).await.unwrap();
-        payload.update_status(Status::Completed, &pool).await.unwrap();
+        payload
+            .update_status(Status::Completed, &pool)
+            .await
+            .unwrap();
 
         let app = create_client_routes(pool, config);
 
@@ -328,7 +360,10 @@ mod tests {
         // Point loc at a directory that does not exist — zip_directory will fail
         payload.set_loc(tempdir.path().join("does_not_exist"));
         payload.update_loc(&pool).await.unwrap();
-        payload.update_status(Status::Completed, &pool).await.unwrap();
+        payload
+            .update_status(Status::Completed, &pool)
+            .await
+            .unwrap();
 
         let app = create_client_routes(pool, config);
 
@@ -360,6 +395,9 @@ mod tests {
 
         let bytes = body_bytes(response).await;
         let load: f32 = serde_json::from_slice(&bytes).unwrap();
-        assert!(load.is_finite(), "CPU load should be a finite number, got {load}");
+        assert!(
+            load.is_finite(),
+            "CPU load should be a finite number, got {load}"
+        );
     }
 }

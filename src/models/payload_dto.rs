@@ -10,7 +10,8 @@ pub async fn create_payload_table(pool: &SqlitePool) -> Result<(), sqlx::Error> 
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             status TEXT NOT NULL,
             loc TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            pid INTEGER
         )
     "#,
     )
@@ -53,6 +54,18 @@ impl Payload {
             .await?;
 
         self.status = status;
+
+        Ok(())
+    }
+
+    pub async fn update_pid(&mut self, pid: u32, pool: &SqlitePool) -> Result<(), sqlx::Error> {
+        let _result = sqlx::query("UPDATE jobs SET pid = ? WHERE id = ?")
+            .bind(pid)
+            .bind(self.id)
+            .execute(pool)
+            .await?;
+
+        self.pid = pid;
 
         Ok(())
     }

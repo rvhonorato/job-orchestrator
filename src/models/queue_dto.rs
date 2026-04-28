@@ -26,6 +26,7 @@ impl Queue<'_> {
                 let status: String = row.get("status");
                 let loc: String = row.get("loc");
                 let dest_id: u32 = row.get("dest_id");
+                let pid: u32 = row.get("pid");
                 Job {
                     id: row.get("id"),
                     user_id: row.get("user_id"),
@@ -33,6 +34,7 @@ impl Queue<'_> {
                     status: Status::from_string(&status),
                     loc: PathBuf::from(loc),
                     dest_id,
+                    pid,
                 }
             })
             .collect();
@@ -110,6 +112,7 @@ impl Queue<'_> {
             if submitted < limit && user_queue.len() < remaining_slots {
                 let status: String = row.get("status");
                 let loc: String = row.get("loc");
+                let pid: u32 = row.get("pid");
                 user_queue.push(Job {
                     id: row.get("id"),
                     user_id: user_id.try_into().unwrap(),
@@ -117,6 +120,7 @@ impl Queue<'_> {
                     status: Status::from_string(&status),
                     loc: PathBuf::from(loc),
                     dest_id: row.get("dest_id"),
+                    pid,
                 });
             }
         }
@@ -182,6 +186,7 @@ mod tests {
                 name: "svc".to_string(),
                 upload_url: "http://example.com/upload".to_string(),
                 download_url: "http://example.com/download".to_string(),
+                terminate_url: "http://example.com/terminate".to_string(),
                 runs_per_user: 5,
             },
         );
@@ -220,6 +225,7 @@ mod tests {
                 name: "A".to_string(),
                 upload_url: "http://example.com/upload_a".to_string(),
                 download_url: "http://example.com/download_a".to_string(),
+                terminate_url: "http://example.com/terminate".to_string(),
                 runs_per_user: 5,
             },
         );
@@ -229,6 +235,7 @@ mod tests {
                 name: "B".to_string(),
                 upload_url: "http://example.com/upload_b".to_string(),
                 download_url: "http://example.com/download_b".to_string(),
+                terminate_url: "http://example.com/terminate".to_string(),
                 runs_per_user: 5,
             },
         );
@@ -238,6 +245,7 @@ mod tests {
                 name: "C".to_string(),
                 upload_url: "http://example.com/upload_c".to_string(),
                 download_url: "http://example.com/download_c".to_string(),
+                terminate_url: "http://example.com/terminate".to_string(),
                 runs_per_user: 1,
             },
         );

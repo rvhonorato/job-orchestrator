@@ -51,6 +51,14 @@ pub enum DownloadError {
     InvalidService,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum TerminateError {
+    #[error("generic")]
+    GenericError,
+    #[error("Recieved an error HTTP status: {0}")]
+    HttpError(StatusCode),
+}
+
 pub async fn send<T>(job: &Job, config: &Config, target: T) -> Result<u32, UploadError>
 where
     T: Endpoint,
@@ -78,10 +86,21 @@ where
     }
 }
 
+pub async fn kill<T>(job: &Job, config: &Config, target: T) -> Result<(), TerminateError>
+where
+    T: Endpoint,
+{
+    match config.get_terminate_url(&job.service) {
+        Some(url) => Ok(target.terminate(job, url).await?),
+        None => Err(TerminateError::GenericError),
+    }
+}
+
 // These are traits that all Destinations need to have
 pub trait Endpoint {
     async fn upload(&self, j: &Job, url: &str) -> Result<u32, UploadError>;
     async fn download(&self, j: &Job, url: &str) -> Result<Status, DownloadError>;
+    async fn terminate(&self, job_id: &Job, url: &str) -> Result<(), TerminateError>;
 }
 
 #[cfg(test)]
@@ -103,6 +122,9 @@ mod tests {
         async fn download(&self, _j: &Job, _url: &str) -> Result<Status, DownloadError> {
             Ok(Status::Completed)
         }
+        async fn terminate(&self, _j: &Job, _url: &str) -> Result<(), TerminateError> {
+            Ok(())
+        }
     }
 
     impl Endpoint for ErrMockEndpoint {
@@ -111,6 +133,9 @@ mod tests {
         }
         async fn download(&self, _j: &Job, _url: &str) -> Result<Status, DownloadError> {
             Err(DownloadError::NotFound)
+        }
+        async fn terminate(&self, _j: &Job, _url: &str) -> Result<(), TerminateError> {
+            Err(TerminateError::GenericError)
         }
     }
 
@@ -122,6 +147,7 @@ mod tests {
                 name: "test".to_string(),
                 upload_url: "http://example.com/upload".to_string(),
                 download_url: "http://example.com/download".to_string(),
+                terminate_url: "http://example.com/terminate".to_string(),
                 runs_per_user: 5,
             },
         );
@@ -134,7 +160,7 @@ mod tests {
         }
     }
 
-    fn make_job(data_path: &str, service: &str, id: i32) -> Job {
+    fn make_job(data_path: &str, service: &str, id: u32) -> Job {
         let mut job = Job::new(data_path);
         job.set_service(service.to_string());
         job.id = id;
