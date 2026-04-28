@@ -14,7 +14,6 @@ pub struct Job {
     #[schema(value_type = String)]
     pub loc: PathBuf,
     pub dest_id: u32,
-    pub pid: u32,
 }
 
 impl Job {
@@ -27,7 +26,6 @@ impl Job {
             status: Status::Unknown,
             loc,
             dest_id: 0,
-            pid: 0,
         }
     }
 

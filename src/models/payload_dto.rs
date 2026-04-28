@@ -10,7 +10,7 @@ pub async fn create_payload_table(pool: &SqlitePool) -> Result<(), sqlx::Error> 
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             status TEXT NOT NULL,
             loc TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     "#,
     )

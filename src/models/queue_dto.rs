@@ -26,7 +26,6 @@ impl Queue<'_> {
                 let status: String = row.get("status");
                 let loc: String = row.get("loc");
                 let dest_id: u32 = row.get("dest_id");
-                let pid: u32 = row.get("pid");
                 Job {
                     id: row.get("id"),
                     user_id: row.get("user_id"),
@@ -34,7 +33,6 @@ impl Queue<'_> {
                     status: Status::from_string(&status),
                     loc: PathBuf::from(loc),
                     dest_id,
-                    pid,
                 }
             })
             .collect();
@@ -113,7 +111,6 @@ impl Queue<'_> {
             if submitted < limit && user_queue.len() < remaining_slots {
                 let status: String = row.get("status");
                 let loc: String = row.get("loc");
-                let pid: u32 = row.get("pid");
                 user_queue.push(Job {
                     id: row.get("id"),
                     user_id: user_id.try_into().unwrap(),
@@ -121,7 +118,6 @@ impl Queue<'_> {
                     status: Status::from_string(&status),
                     loc: PathBuf::from(loc),
                     dest_id: row.get("dest_id"),
-                    pid,
                 });
             }
         }
