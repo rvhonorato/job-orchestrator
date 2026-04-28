@@ -890,8 +890,7 @@ mod test {
         let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
         // Initialize config
         let mut config = Config::new().unwrap();
-        // config.data_path = tempdir.path().to_str().unwrap().to_string();
-        config.data_path = "/home/rodrigo/repos/job-orchestrator/DEBUG".to_string();
+        config.data_path = tempdir.path().to_str().unwrap().to_string();
 
         // Add a payload
         let mut payload = Payload::new();
