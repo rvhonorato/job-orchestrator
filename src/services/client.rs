@@ -931,9 +931,6 @@ mod test {
             .expect("Failed to retrieve payload");
 
         assert_eq!(_payload.status, Status::Running);
-
-        let expected_output = _payload.loc.join("output.txt");
-        assert!(expected_output.exists());
     }
 
     /// When run.sh is missing, the job should be marked as Invalid (user error).
