@@ -170,4 +170,108 @@ mod test {
         let content = fs::read_to_string(expected_path).unwrap();
         assert_eq!(content, "Test data");
     }
+
+    #[test]
+    fn test_new() {
+        let p = Payload::new();
+        assert_eq!(p.id, 0);
+        assert!(p.input.is_empty());
+        assert_eq!(p.status, Status::Unknown);
+        assert_eq!(p.loc, PathBuf::new());
+        assert_eq!(p.pid, 0);
+        assert!(!p.killed);
+    }
+
+    #[test]
+    fn test_set_id() {
+        let mut p = Payload::new();
+        p.set_id(42);
+        assert_eq!(p.id, 42);
+    }
+
+    #[test]
+    fn test_set_status() {
+        let mut p = Payload::new();
+        p.set_status(Status::Prepared);
+        assert_eq!(p.status, Status::Prepared);
+    }
+
+    #[test]
+    fn test_set_loc() {
+        let mut p = Payload::new();
+        let loc = PathBuf::from("/tmp/test");
+        p.set_loc(loc.clone());
+        assert_eq!(p.loc, loc);
+    }
+
+    #[test]
+    fn test_is_killed() {
+        let mut p = Payload::new();
+        assert!(!p.is_killed());
+        p.killed = true;
+        assert!(p.is_killed());
+    }
+
+    #[test]
+    fn test_is_running_no_pid() {
+        let p = Payload::new();
+        assert_eq!(p.is_running(), None);
+    }
+
+    #[test]
+    fn test_is_running_with_current_pid() {
+        let mut p = Payload::new();
+        p.pid = std::process::id();
+        assert_eq!(p.is_running(), Some(true));
+    }
+
+    #[test]
+    fn test_is_running_with_invalid_pid() {
+        let mut p = Payload::new();
+        p.pid = 999999;
+        assert_eq!(p.is_running(), Some(false));
+    }
+
+    #[tokio::test]
+    async fn test_is_exit() {
+        let mut p = Payload::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        p.loc = temp_dir.path().to_path_buf();
+
+        // No exit file exists
+        assert!(!p.is_exit());
+
+        // Create exit file
+        fs::write(p.loc.join(EXIT_FILE), "0").unwrap();
+        assert!(p.is_exit());
+    }
+
+    #[tokio::test]
+    async fn test_status_code() {
+        let mut p = Payload::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        p.loc = temp_dir.path().to_path_buf();
+
+        // No exit file
+        assert_eq!(p.status_code(), None);
+
+        // Invalid exit code in file
+        fs::write(p.loc.join(EXIT_FILE), "not a number").unwrap();
+        assert_eq!(p.status_code(), None);
+
+        // Valid exit code
+        fs::write(p.loc.join(EXIT_FILE), "42").unwrap();
+        assert_eq!(p.status_code(), Some(42));
+    }
+
+    #[tokio::test]
+    async fn test_kill() {
+        let mut p = Payload::new();
+        // PID 0 should return Ok without doing anything
+        assert!(p.kill().is_ok());
+
+        // Nonexistent PID should still return Ok (kill command succeeds even if PID doesn't exist)
+        p.pid = 999999;
+        assert!(p.kill().is_ok());
+    }
 }

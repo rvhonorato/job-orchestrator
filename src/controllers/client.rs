@@ -403,4 +403,47 @@ mod tests {
             "CPU load should be a finite number, got {load}"
         );
     }
+
+    #[tokio::test]
+    async fn test_kill_not_found() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_client_routes(pool, config);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/kill/9999")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_kill_success() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_client_routes(pool.clone(), config);
+
+        // Create a payload
+        let mut payload = Payload::new();
+        payload.add_to_db(&pool).await.unwrap();
+        let payload_id = payload.id;
+
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/kill/{payload_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify the payload was marked as killed
+        let retrieved = Payload::retrieve_id(payload_id, &pool).await.unwrap();
+        assert!(retrieved.killed);
+    }
 }

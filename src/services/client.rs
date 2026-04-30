@@ -599,4 +599,128 @@ mod test {
         // No run.sh = user error = Invalid status
         assert_eq!(_payload.status, Status::Invalid);
     }
+
+    #[tokio::test]
+    async fn test_updater_killed_status() {
+        let tempdir = TempDir::new().unwrap();
+        let db_path = tempdir.path().join("test.db");
+        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
+        let mut config = Config::new().unwrap();
+        config.data_path = tempdir.path().to_str().unwrap().to_string();
+
+        // Create a payload in Running state with a fake PID
+        let mut payload = Payload::new();
+        payload.add_to_db(&pool).await.unwrap();
+        payload.set_loc(tempdir.path().join(payload.id.to_string()));
+        payload.update_loc(&pool).await.unwrap();
+        payload.pid = 999999; // Fake PID that doesn't exist
+        payload.update_pid(&pool).await.unwrap();
+        payload
+            .update_status(Status::Running, &pool)
+            .await
+            .unwrap();
+
+        // Mark as killed
+        payload.mark_as_killed(&pool).await.unwrap();
+
+        // Run the updater
+        updater(pool.clone(), config).await;
+
+        // Verify status was updated to Killed
+        let retrieved = Payload::retrieve_id(payload.id, &pool).await.unwrap();
+        assert_eq!(retrieved.status, Status::Killed);
+    }
+
+    #[tokio::test]
+    async fn test_updater_failed_no_exit_file() {
+        let tempdir = TempDir::new().unwrap();
+        let db_path = tempdir.path().join("test.db");
+        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
+        let mut config = Config::new().unwrap();
+        config.data_path = tempdir.path().to_str().unwrap().to_string();
+
+        // Create a payload in Running state with a fake PID
+        let mut payload = Payload::new();
+        payload.add_to_db(&pool).await.unwrap();
+        payload.set_loc(tempdir.path().join(payload.id.to_string()));
+        fs::create_dir_all(&payload.loc).unwrap();
+        payload.update_loc(&pool).await.unwrap();
+        payload.pid = 999999; // Fake PID that killed/crashed
+        payload.update_pid(&pool).await.unwrap();
+        payload
+            .update_status(Status::Running, &pool)
+            .await
+            .unwrap();
+
+        // Run the updater - should fail because no exit file exists
+        updater(pool.clone(), config).await;
+
+        // Verify status was updated to Failed
+        let retrieved = Payload::retrieve_id(payload.id, &pool).await.unwrap();
+        assert_eq!(retrieved.status, Status::Failed);
+    }
+
+    #[tokio::test]
+    async fn test_updater_completed_with_exit_code_zero() {
+        let tempdir = TempDir::new().unwrap();
+        let db_path = tempdir.path().join("test.db");
+        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
+        let mut config = Config::new().unwrap();
+        config.data_path = tempdir.path().to_str().unwrap().to_string();
+
+        // Create a payload in Running state with a fake PID and exit file with code 0
+        let mut payload = Payload::new();
+        payload.add_to_db(&pool).await.unwrap();
+        payload.set_loc(tempdir.path().join(payload.id.to_string()));
+        fs::create_dir_all(&payload.loc).unwrap();
+        payload.update_loc(&pool).await.unwrap();
+        payload.pid = 999999; // Fake PID
+        payload.update_pid(&pool).await.unwrap();
+        payload
+            .update_status(Status::Running, &pool)
+            .await
+            .unwrap();
+
+        // Create exit file with code 0
+        fs::write(payload.loc.join(".orchestrator.exit"), "0").unwrap();
+
+        // Run the updater
+        updater(pool.clone(), config).await;
+
+        // Verify status was updated to Completed
+        let retrieved = Payload::retrieve_id(payload.id, &pool).await.unwrap();
+        assert_eq!(retrieved.status, Status::Completed);
+    }
+
+    #[tokio::test]
+    async fn test_updater_failed_with_nonzero_exit_code() {
+        let tempdir = TempDir::new().unwrap();
+        let db_path = tempdir.path().join("test.db");
+        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
+        let mut config = Config::new().unwrap();
+        config.data_path = tempdir.path().to_str().unwrap().to_string();
+
+        // Create a payload in Running state with a fake PID and exit file with code 1
+        let mut payload = Payload::new();
+        payload.add_to_db(&pool).await.unwrap();
+        payload.set_loc(tempdir.path().join(payload.id.to_string()));
+        fs::create_dir_all(&payload.loc).unwrap();
+        payload.update_loc(&pool).await.unwrap();
+        payload.pid = 999999; // Fake PID
+        payload.update_pid(&pool).await.unwrap();
+        payload
+            .update_status(Status::Running, &pool)
+            .await
+            .unwrap();
+
+        // Create exit file with code 1
+        fs::write(payload.loc.join(".orchestrator.exit"), "1").unwrap();
+
+        // Run the updater
+        updater(pool.clone(), config).await;
+
+        // Verify status was updated to Failed
+        let retrieved = Payload::retrieve_id(payload.id, &pool).await.unwrap();
+        assert_eq!(retrieved.status, Status::Failed);
+    }
 }

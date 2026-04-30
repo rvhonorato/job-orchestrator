@@ -125,6 +125,16 @@ mod test {
     use tempfile::TempDir;
 
     #[tokio::test]
+    async fn test_create_payload_table() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
+
+        let result = create_payload_table(&pool).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
     async fn test_add_to_db() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
@@ -158,6 +168,64 @@ mod test {
             .expect("Failed to update payload status");
 
         assert_eq!(payload.status, Status::Prepared);
+    }
+
+    #[tokio::test]
+    async fn test_update_pid() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
+
+        let mut payload = Payload::new();
+        payload.add_to_db(&pool).await.unwrap();
+        let payload_id = payload.id;
+
+        // Set a PID
+        payload.pid = 12345;
+        payload.update_pid(&pool).await.unwrap();
+
+        // Retrieve and verify PID was updated
+        let retrieved = Payload::retrieve_id(payload_id, &pool).await.unwrap();
+        assert_eq!(retrieved.pid, 12345);
+    }
+
+    #[tokio::test]
+    async fn test_mark_as_killed() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
+
+        let mut payload = Payload::new();
+        payload.add_to_db(&pool).await.unwrap();
+        let payload_id = payload.id;
+
+        assert!(!payload.killed);
+
+        payload.mark_as_killed(&pool).await.unwrap();
+        assert!(payload.killed);
+
+        // Verify it was persisted to DB
+        let retrieved = Payload::retrieve_id(payload_id, &pool).await.unwrap();
+        assert!(retrieved.killed);
+    }
+
+    #[tokio::test]
+    async fn test_update_loc() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
+
+        let mut payload = Payload::new();
+        payload.add_to_db(&pool).await.unwrap();
+        let payload_id = payload.id;
+
+        let new_loc = PathBuf::from("/new/location");
+        payload.set_loc(new_loc.clone());
+        payload.update_loc(&pool).await.unwrap();
+
+        // Retrieve and verify loc was updated
+        let retrieved = Payload::retrieve_id(payload_id, &pool).await.unwrap();
+        assert_eq!(retrieved.loc, new_loc);
     }
 
     #[tokio::test]
