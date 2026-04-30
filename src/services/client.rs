@@ -25,6 +25,8 @@ pub enum ClientError {
     NoExecScript,
     #[error("Unsafe script detected: {reason}")]
     UnsafeScript { reason: String },
+    #[error("Missing requirement: {reason}")]
+    MissingRequirement { reason: String },
 }
 
 pub struct Client;
@@ -229,9 +231,10 @@ pub async fn runner(pool: SqlitePool, config: Config) {
                         error!("There was an error while executing the payload: {e}");
                         let status = match e {
                             // Some script  error, mark as invalid
-                            ClientError::NoExecScript | ClientError::UnsafeScript { .. } => {
-                                Status::Invalid
-                            }
+                            // TODO: Figure out a way to propagate this error to the user
+                            ClientError::NoExecScript
+                            | ClientError::UnsafeScript { .. }
+                            | ClientError::MissingRequirement { .. } => Status::Invalid,
                             // Some error during process spawn
                             ClientError::Execution => Status::Failed,
                         };
@@ -274,10 +277,15 @@ pub async fn updater(pool: SqlitePool, config: Config) {
                             j.update_status(Status::Failed, &pool_clone).await.ok();
                         }
                     } else if j.is_running() == Some(true) {
-                        // PID is actually running, do nothing - this branch needs to exist
+                        //  DO NOTHING
+                        // NOTE: PID is actually running, do nothing - this branch needs to exist
                     } else {
-                        // if we reach this logic the process crashed without exit file
-                        j.update_status(Status::Failed, &pool_clone).await.ok();
+                        // DO NOTHING
+                        // NOTE: If it reached this condition, the payload can be either lost
+                        //  or is in a race condition writing the file.
+                        // To avoid the race we keep the payload running
+                        // With the trade-off that if the job is truly gone
+                        //  there is no way of capturing it.
                     }
                 })
             })
@@ -519,7 +527,7 @@ mod test {
             .expect("Failed to add payload to DB");
 
         // Add input data
-        let data = b"#!/bin/bash\necho 'Hello, World!' > output.txt\n";
+        let data = b"#!/bin/bash\ntrap 'echo $? > .orchestrator.exit' EXIT\necho 'Hello, World!' > output.txt\n";
         payload.add_input("run.sh".to_string(), data.to_vec());
 
         // Prepare the payload
@@ -648,12 +656,12 @@ mod test {
         payload.update_pid(&pool).await.unwrap();
         payload.update_status(Status::Running, &pool).await.unwrap();
 
-        // Run the updater - should fail because no exit file exists
+        // Run the updater - should remain Running since no exit file exists yet
         updater(pool.clone(), config).await;
 
-        // Verify status was updated to Failed
+        // Verify status remains Running (race condition: exit file may appear next cycle)
         let retrieved = Payload::retrieve_id(payload.id, &pool).await.unwrap();
-        assert_eq!(retrieved.status, Status::Failed);
+        assert_eq!(retrieved.status, Status::Running);
     }
 
     #[tokio::test]

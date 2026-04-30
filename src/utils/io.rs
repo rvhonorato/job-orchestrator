@@ -252,6 +252,16 @@ pub fn validate_script(path: &std::path::PathBuf) -> Result<(), ClientError> {
         }
     }
 
+    // Ensure script has the required trap for exit code capture
+    if !content.contains("trap")
+        || !content.contains(".orchestrator.exit")
+        || !content.contains("EXIT")
+    {
+        return Err(ClientError::MissingRequirement {
+            reason: "Missing required trap for exit code capture. Add: trap 'echo $? > .orchestrator.exit' EXIT".to_string(),
+        });
+    }
+
     Ok(())
 }
 
@@ -277,8 +287,21 @@ mod tests {
     fn test_validate_script_clean() {
         let temp_dir = tempfile::tempdir().unwrap();
         let script_path = temp_dir.path().join("run.sh");
-        fs::write(&script_path, b"#!/bin/bash\necho 'Hello, World!'\nexit 0\n").unwrap();
+        fs::write(
+            &script_path,
+            b"#!/bin/bash\ntrap 'echo $? > .orchestrator.exit' EXIT\necho 'Hello, World!'\nexit 0\n",
+        )
+        .unwrap();
         assert!(validate_script(&script_path).is_ok());
+    }
+
+    #[test]
+    fn test_validate_script_missing_trap() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let script_path = temp_dir.path().join("run.sh");
+        fs::write(&script_path, b"#!/bin/bash\necho 'Hello, World!'\nexit 0\n").unwrap();
+        let result = validate_script(&script_path);
+        assert!(matches!(result, Err(ClientError::MissingRequirement { .. })));
     }
 
     #[test]
