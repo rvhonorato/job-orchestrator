@@ -527,7 +527,7 @@ mod test {
             .expect("Failed to add payload to DB");
 
         // Add input data
-        let data = b"#!/bin/bash\necho 'Hello, World!' > output.txt\n";
+        let data = b"#!/bin/bash\ntrap 'echo $? > .orchestrator.exit' EXIT\necho 'Hello, World!' > output.txt\n";
         payload.add_input("run.sh".to_string(), data.to_vec());
 
         // Prepare the payload
@@ -656,12 +656,12 @@ mod test {
         payload.update_pid(&pool).await.unwrap();
         payload.update_status(Status::Running, &pool).await.unwrap();
 
-        // Run the updater - should fail because no exit file exists
+        // Run the updater - should remain Running since no exit file exists yet
         updater(pool.clone(), config).await;
 
-        // Verify status was updated to Failed
+        // Verify status remains Running (race condition: exit file may appear next cycle)
         let retrieved = Payload::retrieve_id(payload.id, &pool).await.unwrap();
-        assert_eq!(retrieved.status, Status::Failed);
+        assert_eq!(retrieved.status, Status::Running);
     }
 
     #[tokio::test]

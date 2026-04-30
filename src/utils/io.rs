@@ -287,7 +287,11 @@ mod tests {
     fn test_validate_script_clean() {
         let temp_dir = tempfile::tempdir().unwrap();
         let script_path = temp_dir.path().join("run.sh");
-        fs::write(&script_path, b"#!/bin/bash\necho 'Hello, World!'\nexit 0\n").unwrap();
+        fs::write(
+            &script_path,
+            b"#!/bin/bash\ntrap 'echo $? > .orchestrator.exit' EXIT\necho 'Hello, World!'\nexit 0\n",
+        )
+        .unwrap();
         assert!(validate_script(&script_path).is_ok());
     }
 
