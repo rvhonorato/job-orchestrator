@@ -22,6 +22,7 @@ services:
       # Services #==================================================#
       SERVICE_EXAMPLE_UPLOAD_URL: http://client:9000/submit
       SERVICE_EXAMPLE_DOWNLOAD_URL: http://client:9000/retrieve
+      SERVICE_EXAMPLE_TERMINATE_URL: http://client:9000/kill
       SERVICE_EXAMPLE_RUNS_PER_USER: 5
       #=============================================================#
     ports:
