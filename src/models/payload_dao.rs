@@ -103,10 +103,10 @@ impl Payload {
             .arg(self.pid.to_string())
             .status()?;
         if !status.success() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("kill failed for pid {}", self.pid),
-            ));
+            return Err(std::io::Error::other(format!(
+                "kill failed for pid {}",
+                self.pid
+            )));
         }
         Ok(())
     }
