@@ -130,10 +130,10 @@ pub async fn load() -> Json<f32> {
 }
 
 #[utoipa::path(
-    get,
+    post,
     path = "/kill/{id}",
     params(
-    ("id" = i32, Path, description = "ID of payload to be terminated")
+    ("id" = u32, Path, description = "ID of payload to be terminated")
     )
 )]
 pub async fn kill(State(state): State<AppState>, Path(id): Path<u32>) -> Response {

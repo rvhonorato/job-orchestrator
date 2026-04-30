@@ -98,10 +98,16 @@ impl Payload {
         if self.pid == 0 {
             return Ok(());
         }
-        std::process::Command::new("kill")
+        let status = std::process::Command::new("kill")
             .arg("-TERM")
             .arg(self.pid.to_string())
             .status()?;
+        if !status.success() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("kill failed for pid {}", self.pid),
+            ));
+        }
         Ok(())
     }
 
@@ -271,12 +277,12 @@ mod test {
         // PID 0 should return Ok without doing anything
         assert!(p.kill().is_ok());
 
-        // Nonexistent PID should still return Ok (kill command succeeds even if PID doesn't exist)
+        // Nonexistent PID should return Err since kill command fails
         p.pid = 999999;
-        assert!(p.kill().is_ok());
+        assert!(p.kill().is_err());
 
         // Another nonexistent PID
         p.pid = 999998;
-        assert!(p.kill().is_ok());
+        assert!(p.kill().is_err());
     }
 }
