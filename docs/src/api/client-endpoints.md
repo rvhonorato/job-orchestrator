@@ -106,6 +106,48 @@ When the payload is **completed**, returns:
 
 ---
 
+### POST /kill/{id}
+
+Terminate a running payload.
+
+**Parameters**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | integer | Payload ID to terminate |
+
+**Example**
+
+```bash
+curl -X POST http://localhost:9000/kill/1
+```
+
+**Response**
+
+On success (200 OK):
+- Empty body
+
+On failure:
+- `404` if payload not found
+- `500` if kill operation failed
+
+**Status Codes**
+
+| Code | Description |
+|------|-------------|
+| `200` | Payload terminated successfully |
+| `404` | Payload not found |
+| `500` | Kill operation failed |
+
+**Notes**
+
+- The payload must be in `Running` or `Prepared` status
+- Sends SIGTERM to the process group
+- The payload status will change to `Killed`
+- This endpoint is called by the server's `/terminate/{id}` endpoint
+
+---
+
 ### GET /load
 
 Report current CPU usage.

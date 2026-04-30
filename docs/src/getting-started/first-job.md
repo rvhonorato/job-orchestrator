@@ -22,6 +22,9 @@ Create a simple `run.sh` script:
 ```bash
 cat > run.sh << 'EOF'
 #!/bin/bash
+# Required: Capture exit code for the orchestrator client
+trap 'echo "$?" > .orchestrator.exit' EXIT
+
 echo "Hello from job-orchestrator!" > output.txt
 echo "Processing complete at $(date)" >> output.txt
 EOF
@@ -69,7 +72,7 @@ If the job is not yet completed, you'll get a JSON response:
 }
 ```
 
-The `status` field will be one of: `Queued`, `Processing`, `Submitted`, `Running`, `Completed`, `Failed`, `Invalid`, `Cleaned`, or `Unknown`.
+The `status` field will be one of: `Queued`, `Processing`, `Submitted`, `Running`, `Completed`, `Failed`, `Invalid`, `Cleaned`, `Unknown`, `Locked`, or `Killed`.
 
 ## Downloading Results
 
@@ -93,6 +96,31 @@ Hello from job-orchestrator!
 Processing complete at <timestamp>
 ```
 
+## Canceling a Job
+
+If you need to cancel a running job, use the terminate endpoint:
+
+```bash
+# Cancel job with ID 1
+curl -X POST http://localhost:5000/terminate/1
+```
+
+Response on success:
+
+```json
+{
+  "id": 1,
+  "status": "Killed",
+  "message": "job terminated"
+}
+```
+
+**Notes:**
+- Only jobs in `Running`, `Submitted`, or `Queued` status can be terminated
+- Terminated jobs will have status `Killed`
+- The server sends a termination request to the client, which kills the process
+- If the job has already completed, termination will fail with a 500 error
+
 ## A More Complex Example
 
 Here's a job that processes an input file:
@@ -104,6 +132,9 @@ echo "sample data" > input.txt
 # Create a processing script
 cat > run.sh << 'EOF'
 #!/bin/bash
+# Required: Capture exit code for the orchestrator client
+trap 'echo "$?" > .orchestrator.exit' EXIT
+
 # Count lines and words in input
 wc input.txt > stats.txt
 # Transform the data
@@ -129,6 +160,16 @@ curl -X POST http://localhost:5000/upload \
 - Exit code `0` indicates success
 - Non-zero exit code indicates failure
 - All output files in the working directory are included in results
+
+**Important**: For the client to properly capture the exit code of your script, it **MUST** include the following trap at the beginning:
+
+```bash
+#!/bin/bash
+trap 'echo "$?" > .orchestrator.exit' EXIT
+# ... rest of your script
+```
+
+This ensures that when your `run.sh` exits, it writes the exit code to `.orchestrator.exit`, which the client's Updater task reads to determine if the job completed successfully or failed.
 
 ### File Size Limits
 

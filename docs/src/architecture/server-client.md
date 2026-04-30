@@ -60,6 +60,7 @@ PORT=5000 job-orchestrator server
 |----------|--------|---------|
 | `/upload` | POST | Submit new job |
 | `/download/:id` | GET | Get results or status |
+| `/terminate/:id` | POST | Cancel a running job |
 | `/health` | GET | Health check |
 | `/swagger-ui/` | GET | API documentation |
 
@@ -99,6 +100,7 @@ PORT=9000 job-orchestrator client
 |----------|--------|---------|
 | `/submit` | POST | Receive job from server |
 | `/retrieve/:id` | GET | Return completed results |
+| `/kill/:id` | POST | Terminate a running payload |
 | `/load` | GET | Report CPU usage |
 | `/health` | GET | Health check |
 
@@ -123,6 +125,10 @@ User                Server                    Client
   │                   │                         │
   │──GET /download/:id▶│                         │
   │◀─── results.zip ──│                         │
+  │                   │                         │
+  │──POST /terminate/:id───▶│                    │
+  │                   │──POST /kill/:id─────────▶│
+  │                   │◀─── kill signal ────────│
 ```
 
 ## Deployment Patterns

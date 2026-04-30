@@ -29,6 +29,7 @@ to diverse computing resources.
 - Dual-mode architecture (server + client)
 - RESTful API with Swagger UI
 - Automatic job cleanup
+- Job termination and cancellation
 
 ## Quick Start
 
@@ -51,6 +52,9 @@ curl http://localhost:5000/download/1
 
 # Download results (when status is "Completed", returns zip)
 curl -o results.zip http://localhost:5000/download/1
+
+# Cancel a running job
+curl -X POST http://localhost:5000/terminate/1
 ```
 
 ## Documentation

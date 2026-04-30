@@ -138,6 +138,61 @@ done
 
 ---
 
+### POST /terminate/{id}
+
+Cancel a running job.
+
+**Parameters**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | integer | Job ID to terminate |
+
+**Example**
+
+```bash
+curl -X POST http://localhost:5000/terminate/1
+```
+
+**Response**
+
+On success:
+
+```json
+{
+  "id": 1,
+  "status": "Killed",
+  "message": "job terminated"
+}
+```
+
+On failure:
+
+```json
+{
+  "id": 1,
+  "status": "Running",
+  "message": "could not terminate job"
+}
+```
+
+**Status Codes**
+
+| Code | Description |
+|------|-------------|
+| `200` | Job terminated successfully |
+| `404` | Job not found |
+| `500` | Server error or termination failed |
+
+**Notes**
+
+- The job must be in `Running` or `Submitted` status to be terminated
+- Terminated jobs will have status `Killed`
+- The server sends a termination signal to the client, which then kills the process
+- If the job has already completed, the termination request will fail
+
+---
+
 ### GET /health
 
 Health check endpoint.

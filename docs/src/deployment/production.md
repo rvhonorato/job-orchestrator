@@ -146,6 +146,11 @@ server {
         proxy_set_header Host $host;
     }
 
+    location /terminate {
+        proxy_pass http://orchestrator;
+        proxy_set_header Host $host;
+    }
+
     location /health {
         proxy_pass http://orchestrator;
     }
