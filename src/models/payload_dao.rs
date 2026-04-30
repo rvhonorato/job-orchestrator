@@ -284,5 +284,20 @@ mod test {
         // Another nonexistent PID
         p.pid = 999998;
         assert!(p.kill().is_err());
+
+        // Test successful kill of a real process
+        // Note: We don't verify the process is actually dead because PIDs can be reused,
+        // but kill() returning Ok() means the kill command succeeded, which is what we test.
+        let child = std::process::Command::new("sleep")
+            .arg("10")
+            .spawn()
+            .expect("Failed to spawn sleep process");
+
+        p.pid = child.id();
+        // Give the process a moment to start
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        
+        // kill() should return Ok if the kill command succeeds
+        assert!(p.kill().is_ok());
     }
 }

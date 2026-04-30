@@ -229,4 +229,26 @@ mod tests {
         let result = retrieve(&job, &config, ErrMockEndpoint).await;
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn test_kill_with_url() {
+        let config = make_config();
+        let job = make_job("/tmp", "test", 1);
+        let result = kill(&job, &config, OkMockEndpoint).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_kill_no_url() {
+        let config = Config {
+            services: HashMap::new(),
+            db_path: "/tmp/test.db".to_string(),
+            data_path: "/tmp".to_string(),
+            max_age: std::time::Duration::from_secs(3600),
+            port: 5000,
+        };
+        let job = make_job("/tmp", "nonexistent", 1);
+        let result = kill(&job, &config, OkMockEndpoint).await;
+        assert!(result.is_err());
+    }
 }

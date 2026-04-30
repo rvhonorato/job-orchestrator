@@ -326,12 +326,14 @@ mod tests {
         unsafe {
             env::set_var("SERVICE_FOO_UPLOAD_URL", "http://foo.com/upload");
             env::set_var("SERVICE_FOO_DOWNLOAD_URL", "http://foo.com/download");
+            env::set_var("SERVICE_FOO_TERMINATE_URL", "http://foo.com/terminate");
             env::set_var("SERVICE_FOO_RUNS_PER_USER", "3");
         }
         let config = Config::new().unwrap();
         cleanup_env(&[
             "SERVICE_FOO_UPLOAD_URL",
             "SERVICE_FOO_DOWNLOAD_URL",
+            "SERVICE_FOO_TERMINATE_URL",
             "SERVICE_FOO_RUNS_PER_USER",
         ]);
 
@@ -341,6 +343,7 @@ mod tests {
             .expect("Service 'foo' should be present");
         assert_eq!(service.upload_url, "http://foo.com/upload");
         assert_eq!(service.download_url, "http://foo.com/download");
+        assert_eq!(service.terminate_url, "http://foo.com/terminate");
         assert_eq!(service.runs_per_user, 3);
     }
 

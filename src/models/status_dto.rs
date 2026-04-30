@@ -90,6 +90,11 @@ mod tests {
     }
 
     #[test]
+    fn test_display_locked() {
+        assert_eq!(format!("{}", Status::Locked), "locked");
+    }
+
+    #[test]
     fn test_display_queued() {
         assert_eq!(format!("{}", Status::Queued), "queued");
     }

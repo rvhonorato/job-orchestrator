@@ -410,4 +410,14 @@ mod tests {
         assert_eq!(retrieved.user_id, 1);
         assert_eq!(retrieved.service, "integration_test");
     }
+
+    #[test]
+    fn test_get_status() {
+        let mut job = Job::new("/tmp");
+        job.status = Status::Prepared;
+        assert_eq!(job.get_status(), Status::Prepared);
+
+        job.status = Status::Running;
+        assert_eq!(job.get_status(), Status::Running);
+    }
 }
