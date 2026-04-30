@@ -1,3 +1,3 @@
 pub mod client;
-pub mod orchestrator;
-pub mod tasks;
+pub mod endpoint;
+pub mod server;

@@ -4,7 +4,7 @@ use utoipa::ToSchema;
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct StatusBody {
-    pub id: i32,
+    pub id: u32,
     pub status: Status,
     pub message: String,
 }

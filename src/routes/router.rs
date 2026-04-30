@@ -1,17 +1,17 @@
 use crate::config::loader::Config;
-use crate::controllers::client::{load, retrieve, submit};
+use crate::controllers::client::{kill, load, retrieve, submit};
 use crate::controllers::health::__path_health;
 use crate::controllers::health::health;
-use crate::controllers::orchestrator::__path_download;
-use crate::controllers::orchestrator::__path_upload;
-use crate::controllers::orchestrator::{download, upload};
 use crate::controllers::ping::ping;
+use crate::controllers::server::__path_download;
+use crate::controllers::server::__path_upload;
+use crate::controllers::server::{download, terminate, upload};
 use crate::models::health_dto::Health;
 use crate::models::job_dao::Job;
 use axum::extract::DefaultBodyLimit;
 use axum::{
-    routing::{get, post},
     Router,
+    routing::{get, post},
 };
 use sqlx::SqlitePool;
 use tower_http::trace::{
@@ -51,6 +51,7 @@ pub fn create_routes(pool: SqlitePool, config: Config) -> Router {
         .route("/health", get(health))
         .route("/upload", post(upload))
         .route("/download/{id}", get(download))
+        .route("/terminate/{id}", post(terminate))
         .merge(SwaggerUi::new("/swagger").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .with_state(state)
         .layer(
@@ -78,6 +79,7 @@ pub fn create_client_routes(pool: SqlitePool, config: Config) -> Router {
         .route("/load", get(load))
         .route("/submit", post(submit))
         .route("/retrieve/{id}", get(retrieve))
+        .route("/kill/{id}", post(kill))
         .with_state(state)
         .layer(
             TraceLayer::new_for_http()

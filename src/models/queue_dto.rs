@@ -39,6 +39,7 @@ impl Queue<'_> {
         self.jobs = jobs;
         Ok(())
     }
+
     pub async fn load(&mut self, pool: &SqlitePool) -> Result<(), sqlx::Error> {
         // ===========================================================================================
         // Step 1: Get all QUEUED jobs
@@ -149,6 +150,8 @@ impl PayloadQueue<'_> {
                 let mut payload = Payload::new();
                 payload.set_id(id);
                 payload.set_status(Status::from_string(&status));
+                payload.pid = row.get("pid");
+                payload.killed = row.get("killed");
                 // Use loc from database, or fall back to constructed path for backwards compatibility
                 let loc_path = loc
                     .map(PathBuf::from)
@@ -182,6 +185,7 @@ mod tests {
                 name: "svc".to_string(),
                 upload_url: "http://example.com/upload".to_string(),
                 download_url: "http://example.com/download".to_string(),
+                terminate_url: "http://example.com/terminate".to_string(),
                 runs_per_user: 5,
             },
         );
@@ -220,6 +224,7 @@ mod tests {
                 name: "A".to_string(),
                 upload_url: "http://example.com/upload_a".to_string(),
                 download_url: "http://example.com/download_a".to_string(),
+                terminate_url: "http://example.com/terminate".to_string(),
                 runs_per_user: 5,
             },
         );
@@ -229,6 +234,7 @@ mod tests {
                 name: "B".to_string(),
                 upload_url: "http://example.com/upload_b".to_string(),
                 download_url: "http://example.com/download_b".to_string(),
+                terminate_url: "http://example.com/terminate".to_string(),
                 runs_per_user: 5,
             },
         );
@@ -238,6 +244,7 @@ mod tests {
                 name: "C".to_string(),
                 upload_url: "http://example.com/upload_c".to_string(),
                 download_url: "http://example.com/download_c".to_string(),
+                terminate_url: "http://example.com/terminate".to_string(),
                 runs_per_user: 1,
             },
         );

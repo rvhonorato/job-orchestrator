@@ -129,6 +129,34 @@ pub async fn load() -> Json<f32> {
     Json(sys.global_cpu_usage())
 }
 
+#[utoipa::path(
+    post,
+    path = "/kill/{id}",
+    params(
+    ("id" = u32, Path, description = "ID of payload to be terminated")
+    )
+)]
+pub async fn kill(State(state): State<AppState>, Path(id): Path<u32>) -> Response {
+    let mut payload = match Payload::retrieve_id(id, &state.pool).await {
+        Ok(p) => p,
+        Err(e) => {
+            let status = match e {
+                sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            return (status, Json(Payload::new())).into_response();
+        }
+    };
+
+    match payload.kill() {
+        Ok(_) => {
+            payload.mark_as_killed(&state.pool).await.ok();
+            (StatusCode::OK).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR).into_response(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::config::loader::{Config, Service};
@@ -158,6 +186,7 @@ mod tests {
                 name: "test".to_string(),
                 upload_url: "http://example.com/upload".to_string(),
                 download_url: "http://example.com/download".to_string(),
+                terminate_url: "http://example.com/terminate".to_string(),
                 runs_per_user: 5,
             },
         );
@@ -258,7 +287,10 @@ mod tests {
 
         let mut payload = Payload::new();
         payload.add_to_db(&pool).await.unwrap();
-        payload.update_status(Status::Prepared, &pool).await.unwrap();
+        payload
+            .update_status(Status::Prepared, &pool)
+            .await
+            .unwrap();
         let payload_id = payload.id;
 
         let app = create_client_routes(pool, config);
@@ -294,7 +326,10 @@ mod tests {
 
         payload.set_loc(payload_dir);
         payload.update_loc(&pool).await.unwrap();
-        payload.update_status(Status::Completed, &pool).await.unwrap();
+        payload
+            .update_status(Status::Completed, &pool)
+            .await
+            .unwrap();
 
         let app = create_client_routes(pool, config);
 
@@ -328,7 +363,10 @@ mod tests {
         // Point loc at a directory that does not exist — zip_directory will fail
         payload.set_loc(tempdir.path().join("does_not_exist"));
         payload.update_loc(&pool).await.unwrap();
-        payload.update_status(Status::Completed, &pool).await.unwrap();
+        payload
+            .update_status(Status::Completed, &pool)
+            .await
+            .unwrap();
 
         let app = create_client_routes(pool, config);
 
@@ -360,6 +398,52 @@ mod tests {
 
         let bytes = body_bytes(response).await;
         let load: f32 = serde_json::from_slice(&bytes).unwrap();
-        assert!(load.is_finite(), "CPU load should be a finite number, got {load}");
+        assert!(
+            load.is_finite(),
+            "CPU load should be a finite number, got {load}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_kill_not_found() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_client_routes(pool, config);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/kill/9999")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_kill_success() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_client_routes(pool.clone(), config);
+
+        // Create a payload
+        let mut payload = Payload::new();
+        payload.add_to_db(&pool).await.unwrap();
+        let payload_id = payload.id;
+
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/kill/{payload_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify the payload was marked as killed
+        let retrieved = Payload::retrieve_id(payload_id, &pool).await.unwrap();
+        assert!(retrieved.killed);
     }
 }

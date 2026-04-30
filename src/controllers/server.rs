@@ -2,6 +2,7 @@ use crate::models::job_dao::Job;
 use crate::models::status_body::StatusBody;
 use crate::models::status_dto::Status;
 use crate::routes::router::AppState;
+use crate::services::server;
 use crate::utils::io::{sanitize_filename, save_file};
 use axum::response::{IntoResponse, Response};
 use axum::{
@@ -16,7 +17,7 @@ use utoipa;
     get,
     path = "/download/{id}",
     params(
-        ("id" = i32, Path, description = "Job identifier")
+        ("id" = u32, Path, description = "Job identifier")
     ),
     responses(
         (status = 200, description = "Job completed — returns zip file", content_type = "application/zip", body = Vec<u8>),
@@ -26,7 +27,7 @@ use utoipa;
     ),
     tag = "files"
 )]
-pub async fn download(State(state): State<AppState>, Path(id): Path<i32>) -> Response {
+pub async fn download(State(state): State<AppState>, Path(id): Path<u32>) -> Response {
     let mut job = Job::new(&state.config.data_path);
     let mut body = StatusBody::new();
 
@@ -197,6 +198,55 @@ pub async fn upload(State(state): State<AppState>, mut multipart: Multipart) -> 
     (StatusCode::CREATED, Json(body)).into_response()
 }
 
+#[utoipa::path(
+    post,
+    path = "/terminate/{id}",
+    params(
+        ("id" = u32, Path, description = "Job identifier")
+    ),
+    responses(),
+    tag = "files"
+)]
+pub async fn terminate(State(state): State<AppState>, Path(id): Path<u32>) -> Response {
+    // 1. Get a job from the id
+    let mut job = Job::new(&state.config.data_path);
+    let mut body = StatusBody::new();
+    let result = job.retrieve_id(id, &state.pool).await;
+    if let Err(e) = result {
+        // Error when retrieving this id, check what kind of error it was
+        let status = match e {
+            // It is not found on the database
+            sqlx::Error::RowNotFound => {
+                body.message = format!("Job {id} not found in the database");
+                StatusCode::NOT_FOUND
+            }
+            // Something else
+            _ => {
+                body.message = "Internal server error".to_string();
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        };
+        // Return the error
+        return (status, Json(body)).into_response();
+    }
+
+    body.id = job.id;
+
+    // 2. Send termination signal to client
+    let status = match server::terminate_job(job, state.pool.clone(), state.config.clone()).await {
+        Ok(_) => {
+            body.message = "job terminated".to_string();
+            StatusCode::OK
+        }
+        Err(_) => {
+            body.message = "could not terminate job".to_string();
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    };
+
+    (status, Json(body)).into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::config::loader::{Config, Service};
@@ -227,6 +277,7 @@ mod tests {
                 name: "test".to_string(),
                 upload_url: "http://example.com/upload".to_string(),
                 download_url: "http://example.com/download".to_string(),
+                terminate_url: "http://example.com/terminate".to_string(),
                 runs_per_user: 5,
             },
         );
@@ -463,8 +514,7 @@ mod tests {
         let bytes = body_bytes(response).await;
         let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
         assert!(
-            body.message.to_lowercase().contains("not found")
-                && body.message.contains("9999"),
+            body.message.to_lowercase().contains("not found") && body.message.contains("9999"),
             "Expected 'not found' message mentioning job id, got: {}",
             body.message
         );
@@ -601,5 +651,127 @@ mod tests {
             "Expected error about output file, got: {}",
             body.message
         );
+    }
+
+    #[tokio::test]
+    async fn test_terminate_not_found() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_routes(pool, config);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/terminate/9999")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            body.message.to_lowercase().contains("not found") && body.message.contains("9999"),
+            "Expected 'not found' message mentioning job id, got: {}",
+            body.message
+        );
+    }
+
+    #[tokio::test]
+    async fn test_terminate_success() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        // Create and add a job to the database
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+        job.add_to_db(&pool).await.unwrap();
+        job.update_dest_id(42, &pool).await.unwrap();
+        job.update_status(Status::Running, &pool).await.unwrap();
+        let job_id = job.id;
+
+        // Mock the terminate endpoint
+        let mut server = mockito::Server::new_async().await;
+
+        let mock = server
+            .mock("POST", "/terminate/42")
+            .with_status(200)
+            .create_async()
+            .await;
+
+        // Update config to use mock server URL
+        let mut config_with_mock = config;
+        if let Some(service) = config_with_mock.services.get_mut("test") {
+            service.terminate_url = format!("{}/terminate", server.url());
+        }
+
+        let app = create_routes(pool, config_with_mock);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/terminate/{job_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body.id, job_id);
+        assert!(body.message.to_lowercase().contains("terminated"));
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_terminate_failure() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        // Create and add a job to the database
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+        job.add_to_db(&pool).await.unwrap();
+        job.update_dest_id(42, &pool).await.unwrap();
+        job.update_status(Status::Running, &pool).await.unwrap();
+        let job_id = job.id;
+
+        // Mock the terminate endpoint to return 500
+        let mut server = mockito::Server::new_async().await;
+
+        let mock = server
+            .mock("POST", "/terminate/42")
+            .with_status(500)
+            .create_async()
+            .await;
+
+        // Update config to use mock server URL
+        let mut config_with_mock = config;
+        if let Some(service) = config_with_mock.services.get_mut("test") {
+            service.terminate_url = format!("{}/terminate", server.url());
+        }
+
+        let app = create_routes(pool, config_with_mock);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/terminate/{job_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert!(body.message.to_lowercase().contains("could not terminate"));
+
+        mock.assert_async().await;
     }
 }

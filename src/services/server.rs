@@ -3,10 +3,9 @@ use std::time::SystemTime;
 
 use crate::config::loader::Config;
 use crate::models::job_dao::Job;
-use crate::models::queue_dao::PayloadQueue;
 use crate::models::{queue_dao::Queue, status_dto::Status};
-use crate::services::client::{Client, ClientError, execute_payload};
-use crate::services::orchestrator;
+use crate::services::client::Client;
+use crate::services::endpoint::{self, TerminateError};
 use futures::stream::{self, StreamExt};
 use sqlx::SqlitePool;
 use tracing::info;
@@ -70,6 +69,30 @@ pub async fn cleaner(pool: SqlitePool, config: Config) {
     futures::future::join_all(futures).await;
 }
 
+// Terminate task will send a kill command to the client
+pub async fn terminate_job(
+    mut j: Job,
+    pool: SqlitePool,
+    config: Config,
+) -> Result<(), TerminateError> {
+    let original_status = j.get_status();
+    // lock the job so no other thread pick it up
+    j.update_status(Status::Locked, &pool).await.ok();
+
+    match endpoint::kill(&j, &config, Client).await {
+        Ok(_) => {
+            // Job was killed
+            j.update_status(Status::Killed, &pool).await.ok();
+            Ok(())
+        }
+        Err(_) => {
+            // There was an error, do nothing
+            j.update_status(original_status, &pool).await.ok();
+            Err(TerminateError::GenericError)
+        }
+    }
+}
+
 pub async fn sender(pool: SqlitePool, config: Config) {
     let mut queue = Queue::new(&config);
     if queue.load(&pool).await.is_ok() {
@@ -84,7 +107,7 @@ pub async fn sender(pool: SqlitePool, config: Config) {
                 tokio::spawn(async move {
                     j.update_status(Status::Processing, &pool_clone).await.ok();
 
-                    match orchestrator::send(&j, &config_clone, Client).await {
+                    match endpoint::send(&j, &config_clone, Client).await {
                         Ok(upload_id) => {
                             info!("submitting: {:?}", j);
                             j.update_status(Status::Submitted, &pool_clone).await.ok();
@@ -121,7 +144,7 @@ pub async fn getter(pool: SqlitePool, config: Config) {
             let pool = pool.clone();
             let config = config.clone();
             async move {
-                match orchestrator::retrieve(&j, &config, Client).await {
+                match  endpoint::retrieve(&j, &config, Client).await {
                     Ok(s) => {
                         if let Err(e) = j.update_status(s, &pool).await {
                             error!("Failed to update status of job {} to {}: {:?}", j.id, s, e);
@@ -144,42 +167,6 @@ pub async fn getter(pool: SqlitePool, config: Config) {
         .buffer_unordered(10)
         .collect()
         .await;
-}
-
-// Client side
-pub async fn runner(pool: SqlitePool, config: Config) {
-    let mut queue = PayloadQueue::new(&config);
-    if queue.list_per_status(Status::Prepared, &pool).await.is_ok() {
-        let futures = queue
-            .jobs
-            .into_iter()
-            .map(|mut j| {
-                let pool_clone = pool.clone();
-                tokio::spawn(async move {
-                    // Mark the job as running, without this status it will stay in `Processing`
-                    j.update_status(Status::Running, &pool_clone).await.ok();
-
-                    match execute_payload(&j) {
-                        Ok(s) => {
-                            j.update_status(s, &pool_clone).await.ok();
-                        }
-                        Err(e) => {
-                            error!("There was an error while executing the payload: {e}");
-                            let status = match e {
-                                ClientError::NoExecScript | ClientError::UnsafeScript { .. } => {
-                                    Status::Invalid
-                                }
-                                ClientError::Execution => Status::Failed,
-                            };
-                            j.update_status(status, &pool_clone).await.ok();
-                        }
-                    }
-                })
-            })
-            .collect::<Vec<_>>();
-
-        futures::future::join_all(futures).await;
-    }
 }
 
 #[cfg(test)]
@@ -261,6 +248,7 @@ mod test {
                 name: "test".to_string(),
                 upload_url: format!("{}/submit", server.url()),
                 download_url: format!("{}/retrieve", server.url()),
+                terminate_url: format!("{}/terminate", server.url()),
                 runs_per_user: 5,
             },
         );
@@ -295,6 +283,7 @@ mod test {
                 name: "A".to_string(),
                 upload_url: "http://example.com/upload_a".to_string(),
                 download_url: "http://example.com/download_a".to_string(),
+                terminate_url: "http://example.com/terminate_a".to_string(),
                 runs_per_user: 5,
             },
         );
@@ -359,159 +348,107 @@ mod test {
     }
 
     #[tokio::test]
-    async fn test_runner() {
-        // Initialize pool
+    async fn test_terminate_job_success() {
         let tempdir = TempDir::new().unwrap();
-        let db_path = tempdir.path().join("test.db");
-        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
-        // Initialize config
+        let pool = SqlitePool::connect(":memory:")
+            .await
+            .unwrap_or_else(|e| panic!("Database connection failed: {e}"));
+        create_jobs_table(&pool).await.unwrap();
+
         let mut config = Config::new().unwrap();
-        config.data_path = tempdir.path().to_str().unwrap().to_string();
+        config.services.insert(
+            "test".to_string(),
+            Service {
+                name: "test".to_string(),
+                upload_url: "http://example.com/upload".to_string(),
+                download_url: "http://example.com/download".to_string(),
+                terminate_url: "http://example.com/terminate".to_string(),
+                runs_per_user: 5,
+            },
+        );
 
-        // Add a payload
-        let mut payload = Payload::new();
-        payload
-            .add_to_db(&pool)
-            .await
-            .expect("Failed to add payload to DB");
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_service("test".to_string());
+        job.set_user_id(1);
+        job.update_dest_id(42, &pool).await.unwrap();
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Running, &pool).await.unwrap();
+        let job_id = job.id;
 
-        // Add input data
-        let data = b"#!/bin/bash\necho 'Hello, World!' > output.txt\n";
-        payload.add_input("run.sh".to_string(), data.to_vec());
+        // Use mockito to mock the HTTP call
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/terminate/42")
+            .with_status(200)
+            .create_async()
+            .await;
 
-        // Prepare the payload
-        payload
-            .prepare(&config.data_path)
-            .expect("Failed to prepare payload");
+        // Update config to use mock server URL
+        if let Some(service) = config.services.get_mut("test") {
+            service.terminate_url = format!("{}/terminate", server.url());
+        }
 
-        // Update loc in database after prepare
-        payload
-            .update_loc(&pool)
-            .await
-            .expect("Failed to update payload loc");
+        let result = terminate_job(job, pool.clone(), config).await;
+        assert!(result.is_ok());
 
-        // Mark as prepared
-        payload
-            .update_status(Status::Prepared, &pool)
-            .await
-            .expect("Failed to update payload status");
+        // Verify the job status was updated to Killed
+        let mut updated_job = Job::new("");
+        updated_job.retrieve_id(job_id, &pool).await.unwrap();
+        assert_eq!(updated_job.status, Status::Killed);
 
-        // Run the runner
-        runner(pool.clone(), config).await;
-
-        // Check the effects
-        let mut _payload = Payload::retrieve_id(payload.id, &pool)
-            .await
-            .expect("Failed to retrieve payload");
-
-        assert_eq!(_payload.status, Status::Completed);
-        let expected_output = tempdir
-            .path()
-            .join(payload.id.to_string())
-            .join("output.txt");
-        assert!(expected_output.exists());
+        mock.assert_async().await;
     }
 
-    /// When a script exits with non-zero code, the job is still "completed" -
-    /// it ran successfully but had a logical failure (e.g., bad user input).
     #[tokio::test]
-    async fn test_runner_script_nonzero_exit_is_completed() {
-        // Initialize pool
+    async fn test_terminate_job_failure() {
         let tempdir = TempDir::new().unwrap();
-        let db_path = tempdir.path().join("test.db");
-        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
-        // Initialize config
+        let pool = SqlitePool::connect(":memory:")
+            .await
+            .unwrap_or_else(|e| panic!("Database connection failed: {e}"));
+        create_jobs_table(&pool).await.unwrap();
+
         let mut config = Config::new().unwrap();
-        config.data_path = tempdir.path().to_str().unwrap().to_string();
+        config.services.insert(
+            "test".to_string(),
+            Service {
+                name: "test".to_string(),
+                upload_url: "http://example.com/upload".to_string(),
+                download_url: "http://example.com/download".to_string(),
+                terminate_url: "http://example.com/terminate".to_string(),
+                runs_per_user: 5,
+            },
+        );
 
-        // Add a payload
-        let mut payload = Payload::new();
-        payload
-            .add_to_db(&pool)
-            .await
-            .expect("Failed to add payload to DB");
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_service("test".to_string());
+        job.set_user_id(1);
+        job.update_dest_id(42, &pool).await.unwrap();
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Running, &pool).await.unwrap();
+        let job_id = job.id;
+        let original_status = job.status;
 
-        // Add input data - script exits with non-zero code
-        let data = b"#!/bin/bash\nexit 1\n";
-        payload.add_input("run.sh".to_string(), data.to_vec());
+        // Mock the terminate endpoint to return 500
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/terminate/42")
+            .with_status(500)
+            .create_async()
+            .await;
 
-        // Prepare the payload
-        payload
-            .prepare(&config.data_path)
-            .expect("Failed to prepare payload");
+        // Update config to use mock server URL
+        if let Some(service) = config.services.get_mut("test") {
+            service.terminate_url = format!("{}/terminate", server.url());
+        }
 
-        // Update loc in database after prepare
-        payload
-            .update_loc(&pool)
-            .await
-            .expect("Failed to update payload loc");
+        let result = terminate_job(job, pool.clone(), config).await;
+        assert!(result.is_err());
 
-        // Mark as prepared
-        payload
-            .update_status(Status::Prepared, &pool)
-            .await
-            .expect("Failed to update payload status");
+        // Verify the job status was restored to original
+        let mut updated_job = Job::new("");
+        updated_job.retrieve_id(job_id, &pool).await.unwrap();
+        assert_eq!(updated_job.status, original_status);
 
-        // Run the runner
-        runner(pool.clone(), config).await;
-
-        // Check the effects
-        // NOTE: You need to retrieve the payload again to get the updated status
-        let mut _payload = Payload::retrieve_id(payload.id, &pool)
-            .await
-            .expect("Failed to retrieve payload");
-
-        // Script ran and exited - job is completed (not failed)
-        assert_eq!(_payload.status, Status::Completed);
-    }
-
-    /// When run.sh is missing, the job should be marked as Invalid (user error).
-    #[tokio::test]
-    async fn test_runner_no_script_sets_invalid() {
-        // Initialize pool
-        let tempdir = TempDir::new().unwrap();
-        let db_path = tempdir.path().join("test.db");
-        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
-        // Initialize config with tempdir
-        let mut config = Config::new().unwrap();
-        config.data_path = tempdir.path().to_str().unwrap().to_string();
-
-        // Add a payload WITHOUT a run.sh script
-        let mut payload = Payload::new();
-        payload
-            .add_to_db(&pool)
-            .await
-            .expect("Failed to add payload to DB");
-
-        // Add some other file, but NOT run.sh
-        payload.add_input("data.txt".to_string(), b"some data".to_vec());
-
-        // Prepare the payload
-        payload
-            .prepare(&config.data_path)
-            .expect("Failed to prepare payload");
-
-        // Update loc in database after prepare
-        payload
-            .update_loc(&pool)
-            .await
-            .expect("Failed to update payload loc");
-
-        // Mark as prepared
-        payload
-            .update_status(Status::Prepared, &pool)
-            .await
-            .expect("Failed to update payload status");
-
-        // Run the runner with the same config
-        runner(pool.clone(), config).await;
-
-        // Check the effects
-        let _payload = Payload::retrieve_id(payload.id, &pool)
-            .await
-            .expect("Failed to retrieve payload");
-
-        // No run.sh = user error = Invalid status
-        assert_eq!(_payload.status, Status::Invalid);
+        mock.assert_async().await;
     }
 }
