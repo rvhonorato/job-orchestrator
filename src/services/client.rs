@@ -260,11 +260,11 @@ pub async fn updater(pool: SqlitePool, config: Config) {
             .map(|mut j| {
                 let pool_clone = pool.clone();
                 tokio::spawn(async move {
-                    // NOTE: Order here is important - check killed first
+                    // NOTE: Order here is important!
+                    // PID can be re-used by the system, so we can only rely on it
+                    // IF the exit flag is not present
                     if j.is_killed() {
                         j.update_status(Status::Killed, &pool_clone).await.ok();
-                    } else if j.is_running() == Some(true) {
-                        // PID is actually running, do nothing
                     } else if j.is_exit()
                         && let Some(status_code) = j.status_code()
                     {
@@ -273,6 +273,8 @@ pub async fn updater(pool: SqlitePool, config: Config) {
                         } else {
                             j.update_status(Status::Failed, &pool_clone).await.ok();
                         }
+                    } else if j.is_running() == Some(true) {
+                        // PID is actually running, do nothing - this branch needs to exist
                     } else {
                         // if we reach this logic the process crashed without exit file
                         j.update_status(Status::Failed, &pool_clone).await.ok();
@@ -615,10 +617,7 @@ mod test {
         payload.update_loc(&pool).await.unwrap();
         payload.pid = 999999; // Fake PID that doesn't exist
         payload.update_pid(&pool).await.unwrap();
-        payload
-            .update_status(Status::Running, &pool)
-            .await
-            .unwrap();
+        payload.update_status(Status::Running, &pool).await.unwrap();
 
         // Mark as killed
         payload.mark_as_killed(&pool).await.unwrap();
@@ -647,10 +646,7 @@ mod test {
         payload.update_loc(&pool).await.unwrap();
         payload.pid = 999999; // Fake PID that killed/crashed
         payload.update_pid(&pool).await.unwrap();
-        payload
-            .update_status(Status::Running, &pool)
-            .await
-            .unwrap();
+        payload.update_status(Status::Running, &pool).await.unwrap();
 
         // Run the updater - should fail because no exit file exists
         updater(pool.clone(), config).await;
@@ -676,10 +672,7 @@ mod test {
         payload.update_loc(&pool).await.unwrap();
         payload.pid = 999999; // Fake PID
         payload.update_pid(&pool).await.unwrap();
-        payload
-            .update_status(Status::Running, &pool)
-            .await
-            .unwrap();
+        payload.update_status(Status::Running, &pool).await.unwrap();
 
         // Create exit file with code 0
         fs::write(payload.loc.join(".orchestrator.exit"), "0").unwrap();
@@ -708,10 +701,7 @@ mod test {
         payload.update_loc(&pool).await.unwrap();
         payload.pid = 999999; // Fake PID
         payload.update_pid(&pool).await.unwrap();
-        payload
-            .update_status(Status::Running, &pool)
-            .await
-            .unwrap();
+        payload.update_status(Status::Running, &pool).await.unwrap();
 
         // Create exit file with code 1
         fs::write(payload.loc.join(".orchestrator.exit"), "1").unwrap();
