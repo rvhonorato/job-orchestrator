@@ -10,6 +10,8 @@ pub async fn create_payload_table(pool: &SqlitePool) -> Result<(), sqlx::Error> 
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             status TEXT NOT NULL,
             loc TEXT,
+            pid INTEGER NOT NULL DEFAULT 0,
+            killed BOOLEAN NOT NULL DEFAULT 0,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     "#,
@@ -74,6 +76,28 @@ impl Payload {
         Ok(())
     }
 
+    pub async fn update_pid(&mut self, pool: &SqlitePool) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE payloads SET pid = ? WHERE id = ?")
+            .bind(self.pid)
+            .bind(self.id)
+            .execute(pool)
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn mark_as_killed(&mut self, pool: &SqlitePool) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE payloads SET killed = ? WHERE id = ?")
+            .bind(true)
+            .bind(self.id)
+            .execute(pool)
+            .await?;
+
+        self.killed = true;
+
+        Ok(())
+    }
+
     pub async fn retrieve_id(id: u32, pool: &SqlitePool) -> Result<Payload, sqlx::Error> {
         let row = sqlx::query("SELECT * FROM payloads WHERE id = ?")
             .bind(id)
@@ -87,6 +111,8 @@ impl Payload {
         payload.id = row.get("id");
         payload.status = Status::from_string(&status);
         payload.loc = loc.map(PathBuf::from).unwrap_or_default();
+        payload.pid = row.get("pid");
+        payload.killed = row.get("killed");
 
         Ok(payload)
     }

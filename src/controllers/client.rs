@@ -149,7 +149,10 @@ pub async fn kill(State(state): State<AppState>, Path(id): Path<u32>) -> Respons
     };
 
     match payload.kill() {
-        Ok(_) => (StatusCode::OK).into_response(),
+        Ok(_) => {
+            payload.mark_as_killed(&state.pool).await.ok();
+            (StatusCode::OK).into_response()
+        }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR).into_response(),
     }
 }

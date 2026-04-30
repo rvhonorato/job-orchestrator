@@ -150,6 +150,8 @@ impl PayloadQueue<'_> {
                 let mut payload = Payload::new();
                 payload.set_id(id);
                 payload.set_status(Status::from_string(&status));
+                payload.pid = row.get("pid");
+                payload.killed = row.get("killed");
                 // Use loc from database, or fall back to constructed path for backwards compatibility
                 let loc_path = loc
                     .map(PathBuf::from)

@@ -1,10 +1,11 @@
 use crate::models::status_dto::Status;
 use crate::services::client::ClientError;
 use crate::utils;
-use crate::utils::sys::ManagedProcess;
+use crate::utils::sys::is_pid_running;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 use utoipa::ToSchema;
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, ToSchema)]
@@ -14,9 +15,13 @@ pub struct Payload {
     pub status: Status,
     #[schema(value_type = String)]
     pub loc: PathBuf,
-    #[serde(skip_serializing, skip_deserializing)]
-    process: Option<ManagedProcess>,
+    pub pid: u32,
+    pub killed: bool,
 }
+
+const RUN_FILE: &str = "run.sh";
+const OUTPUT_FILE: &str = "output.zip";
+const EXIT_FILE: &str = ".orchestrator.exit";
 
 impl Payload {
     pub fn new() -> Payload {
@@ -25,7 +30,8 @@ impl Payload {
             input: HashMap::new(),
             status: Status::Unknown,
             loc: PathBuf::new(),
-            process: None,
+            pid: 0,
+            killed: false,
         }
     }
 
@@ -61,7 +67,7 @@ impl Payload {
 
     pub fn zip_directory(self) -> Result<Vec<u8>, std::io::Error> {
         // Get everything from the `loc` and return it
-        let result = self.loc.join("output.zip");
+        let result = self.loc.join(OUTPUT_FILE);
 
         // Check if output.zip exists to avoid re-zipping
         if !result.exists() {
@@ -74,28 +80,60 @@ impl Payload {
     }
 
     pub fn execute(&mut self) -> Result<(), ClientError> {
-        let run_script = self.loc.join("run.sh");
+        let run_script = self.loc.join(RUN_FILE);
         utils::io::validate_script(&run_script)?;
-        let proc = ManagedProcess::new(&self.loc).map_err(|_| ClientError::Execution)?;
 
-        self.process = Some(proc);
+        let child = Command::new("bash")
+            .arg(run_script)
+            .current_dir(&self.loc)
+            .spawn()
+            .map_err(|_| ClientError::Execution)?;
+
+        self.pid = child.id();
 
         Ok(())
     }
 
     pub fn kill(&mut self) -> std::io::Result<()> {
-        if let Some(process) = &mut self.process {
-            process.kill()?;
+        if self.pid == 0 {
+            return Ok(());
         }
+        std::process::Command::new("kill")
+            .arg("-TERM")
+            .arg(self.pid.to_string())
+            .status()?;
         Ok(())
     }
 
-    pub fn is_running(&mut self) -> bool {
-        self.process.as_mut().is_some_and(|p| p.is_running())
+    pub fn is_exit(&mut self) -> bool {
+        self.loc.join(EXIT_FILE).exists()
+    }
+
+    pub fn is_killed(&self) -> bool {
+        self.killed
+    }
+
+    pub fn is_running(&self) -> Option<bool> {
+        if self.pid != 0 {
+            Some(is_pid_running(self.pid))
+        } else {
+            None
+        }
     }
 
     pub fn status_code(&mut self) -> Option<i32> {
-        self.process.as_mut().and_then(|p| p.get_exit_status())
+        // NOTE: Since the process is spawned, the system will discard the exit status
+        // so the only way we can reliable capture it back is by using
+        // `trap 'echo "$?" > .orchestrator.exit' EXIT` in the top of the `run.sh`
+        // script
+        let exit_file = self.loc.join(EXIT_FILE);
+        if exit_file.exists()
+            && let Ok(content) = std::fs::read_to_string(&exit_file)
+        {
+            content.trim().parse::<i32>().ok()
+        } else {
+            None
+        }
     }
 }
 

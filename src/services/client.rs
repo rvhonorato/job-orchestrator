@@ -225,14 +225,22 @@ pub async fn runner(pool: SqlitePool, config: Config) {
                         .ok();
 
                     if let Err(e) = payload.execute() {
+                        // There was some error in execution
                         error!("There was an error while executing the payload: {e}");
                         let status = match e {
+                            // Some script  error, mark as invalid
                             ClientError::NoExecScript | ClientError::UnsafeScript { .. } => {
                                 Status::Invalid
                             }
+                            // Some error during process spawn
                             ClientError::Execution => Status::Failed,
                         };
+                        // Here job will be either INVALID or FAILED
                         payload.update_status(status, &pool_clone).await.ok();
+                    } else {
+                        // Process was spawned, add `pid` to database
+                        payload.update_pid(&pool_clone).await.ok();
+                        // Don't change the status, it's already running
                     }
                 })
             })
@@ -252,17 +260,22 @@ pub async fn updater(pool: SqlitePool, config: Config) {
             .map(|mut j| {
                 let pool_clone = pool.clone();
                 tokio::spawn(async move {
-                    if j.is_running() {
-                        // do nothing?
-                    } else {
-                        // Check what was the exit code
-                        if let Some(status_code) = j.status_code() {
-                            if status_code == 0 {
-                                j.update_status(Status::Completed, &pool_clone).await.ok();
-                            } else {
-                                j.update_status(Status::Failed, &pool_clone).await.ok();
-                            }
+                    // NOTE: Order here is important - check killed first
+                    if j.is_killed() {
+                        j.update_status(Status::Killed, &pool_clone).await.ok();
+                    } else if j.is_running() == Some(true) {
+                        // PID is actually running, do nothing
+                    } else if j.is_exit()
+                        && let Some(status_code) = j.status_code()
+                    {
+                        if status_code == 0 {
+                            j.update_status(Status::Completed, &pool_clone).await.ok();
+                        } else {
+                            j.update_status(Status::Failed, &pool_clone).await.ok();
                         }
+                    } else {
+                        // if we reach this logic the process crashed without exit file
+                        j.update_status(Status::Failed, &pool_clone).await.ok();
                     }
                 })
             })
