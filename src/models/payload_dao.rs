@@ -226,7 +226,8 @@ mod test {
     }
 
     #[test]
-    fn test_is_running_with_invalid_pid() {
+    fn test_is_running_with_nonexistent_pid() {
+        // Use a very high PID that is unlikely to exist
         let mut p = Payload::new();
         p.pid = 999999;
         assert_eq!(p.is_running(), Some(false));
@@ -272,6 +273,10 @@ mod test {
 
         // Nonexistent PID should still return Ok (kill command succeeds even if PID doesn't exist)
         p.pid = 999999;
+        assert!(p.kill().is_ok());
+
+        // Another nonexistent PID
+        p.pid = 999998;
         assert!(p.kill().is_ok());
     }
 }
