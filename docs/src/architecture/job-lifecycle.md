@@ -38,6 +38,16 @@ sequenceDiagram
 
     Note over Server: Cleaner task (60s interval)
     Server->>Server: Remove jobs older than MAX_AGE
+
+    Note over User,Server: Job Termination Flow
+    User->>Server: POST /terminate/:id
+    Server->>Server: Update status: Locked
+    Server->>Client: POST /kill/:id
+    Client->>Executor: Send SIGTERM
+    Executor-->>Client: Process terminated
+    Client->>Client: Update status: Killed
+    Server->>Server: Update status: Killed
+    Server-->>User: Termination confirmed
 ```
 
 ## Job States
@@ -50,13 +60,25 @@ stateDiagram-v2
     Processing --> Submitted: Sent to client
     Processing --> Failed: Client unreachable
 
-    Submitted --> Completed: Execution successful
-    Submitted --> Unknown: Retrieval failed or execution failed
+    Submitted --> Running: Client started execution
+    Submitted --> Failed: Client execution failed
+    Running --> Completed: Execution successful
+    Running --> Killed: Terminated via API
+
+    Submitted --> Killed: Terminated before execution
+    Running --> Killed: Process killed
+
+    Submitted --> Locked: Termination in progress
+    Running --> Locked: Termination in progress
+    Locked --> Killed: Termination confirmed
+    Locked --> Submitted: Termination failed, restore
+    Locked --> Running: Termination failed, restore
 
     Unknown --> Completed: Retry successful
 
     Completed --> Cleaned: After MAX_AGE
     Failed --> Cleaned: After MAX_AGE
+    Killed --> Cleaned: After MAX_AGE
     Unknown --> Cleaned: After MAX_AGE (if applicable)
 
     Cleaned --> [*]
@@ -69,9 +91,12 @@ stateDiagram-v2
 | **Queued** | Job received and waiting for dispatch |
 | **Processing** | Server is sending job to a client |
 | **Submitted** | Job successfully sent to client, awaiting execution |
+| **Running** | Client is actively executing the job |
 | **Completed** | Job finished successfully, results available |
 | **Failed** | Job failed permanently (client unreachable, execution error) |
 | **Unknown** | Temporary state when retrieval fails, will retry |
+| **Locked** | Job is temporarily locked (e.g., during termination) |
+| **Killed** | Job was manually terminated via API |
 | **Cleaned** | Job data removed after retention period |
 
 ## Lifecycle Stages

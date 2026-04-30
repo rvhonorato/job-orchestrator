@@ -70,6 +70,19 @@ When the Runner task executes a job:
 3. Captures the exit code
 4. All files in the directory are included in results
 
+The Runner also monitors for terminated payloads:
+- If a payload is marked as `killed`, the Runner updates its status to `Killed`
+- The Updater task checks if processes are still running and handles cleanup
+
+### Job Termination
+
+The client supports on-demand job termination via the `/kill/:id` endpoint:
+
+- Receives termination requests from the server
+- Sends SIGTERM to the running process
+- Updates payload status to `Killed`
+- The server's `/terminate/:id` endpoint triggers this via HTTP
+
 ### Resource Reporting
 
 The client exposes a `/load` endpoint that reports CPU usage:

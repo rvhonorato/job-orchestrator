@@ -21,6 +21,7 @@ For each service you want to support, configure these variables:
 |------------------|-------------|
 | `SERVICE_<NAME>_UPLOAD_URL` | Client endpoint for submitting jobs |
 | `SERVICE_<NAME>_DOWNLOAD_URL` | Client endpoint for retrieving results |
+| `SERVICE_<NAME>_TERMINATE_URL` | Client endpoint for terminating jobs |
 | `SERVICE_<NAME>_RUNS_PER_USER` | Maximum concurrent jobs per user (default: 5) |
 
 **Note**: `<NAME>` must be uppercase. For a service called "example", use `SERVICE_EXAMPLE_*`.
@@ -35,6 +36,7 @@ export DB_PATH=/var/lib/job-orchestrator/db.sqlite
 export DATA_PATH=/var/lib/job-orchestrator/data
 export SERVICE_EXAMPLE_UPLOAD_URL=http://localhost:9000/submit
 export SERVICE_EXAMPLE_DOWNLOAD_URL=http://localhost:9000/retrieve
+export SERVICE_EXAMPLE_TERMINATE_URL=http://localhost:9000/kill
 ```
 
 ### Production Setup
@@ -49,11 +51,13 @@ export MAX_AGE=172800  # 48 hours
 # Example service (general purpose)
 export SERVICE_EXAMPLE_UPLOAD_URL=http://compute-1:9000/submit
 export SERVICE_EXAMPLE_DOWNLOAD_URL=http://compute-1:9000/retrieve
+export SERVICE_EXAMPLE_TERMINATE_URL=http://compute-1:9000/kill
 export SERVICE_EXAMPLE_RUNS_PER_USER=10
 
 # HADDOCK service (specialized)
 export SERVICE_HADDOCK_UPLOAD_URL=http://haddock-cluster:9001/submit
 export SERVICE_HADDOCK_DOWNLOAD_URL=http://haddock-cluster:9001/retrieve
+export SERVICE_HADDOCK_TERMINATE_URL=http://haddock-cluster:9001/kill
 export SERVICE_HADDOCK_RUNS_PER_USER=3
 ```
 
@@ -73,6 +77,7 @@ services:
       MAX_AGE: 172800
       SERVICE_EXAMPLE_UPLOAD_URL: http://client:9000/submit
       SERVICE_EXAMPLE_DOWNLOAD_URL: http://client:9000/retrieve
+      SERVICE_EXAMPLE_TERMINATE_URL: http://client:9000/kill
       SERVICE_EXAMPLE_RUNS_PER_USER: 5
     volumes:
       - server-data:/opt/data
@@ -142,15 +147,17 @@ Jobs older than this are removed by the Cleaner task.
 
 ### Service URLs
 
-Each service needs upload and download URLs pointing to a client:
+Each service needs upload, download, and terminate URLs pointing to a client:
 
 ```bash
 SERVICE_MYSERVICE_UPLOAD_URL=http://client-host:9000/submit
 SERVICE_MYSERVICE_DOWNLOAD_URL=http://client-host:9000/retrieve
+SERVICE_MYSERVICE_TERMINATE_URL=http://client-host:9000/kill
 ```
 
 - **UPLOAD_URL**: Where to POST job files
 - **DOWNLOAD_URL**: Where to GET results (`:id` is appended automatically)
+- **TERMINATE_URL**: Where to POST termination requests (`:id` is appended automatically)
 
 ### RUNS_PER_USER
 

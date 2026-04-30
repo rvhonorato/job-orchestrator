@@ -49,6 +49,7 @@ services:
       MAX_AGE: 172800
       SERVICE_EXAMPLE_UPLOAD_URL: http://client:9000/submit
       SERVICE_EXAMPLE_DOWNLOAD_URL: http://client:9000/retrieve
+      SERVICE_EXAMPLE_TERMINATE_URL: http://client:9000/kill
       SERVICE_EXAMPLE_RUNS_PER_USER: 5
     volumes:
       - server-data:/opt/data
@@ -84,6 +85,7 @@ services:
     environment:
       SERVICE_EXAMPLE_UPLOAD_URL: http://client-1:9000/submit
       SERVICE_EXAMPLE_DOWNLOAD_URL: http://client-1:9000/retrieve
+      SERVICE_EXAMPLE_TERMINATE_URL: http://client-1:9000/kill
 
   client-1:
     image: ghcr.io/rvhonorato/job-orchestrator:latest
@@ -113,11 +115,13 @@ services:
       # Light jobs
       SERVICE_LIGHT_UPLOAD_URL: http://client-light:9000/submit
       SERVICE_LIGHT_DOWNLOAD_URL: http://client-light:9000/retrieve
+      SERVICE_LIGHT_TERMINATE_URL: http://client-light:9000/kill
       SERVICE_LIGHT_RUNS_PER_USER: 10
 
       # Heavy jobs
       SERVICE_HEAVY_UPLOAD_URL: http://client-heavy:9000/submit
       SERVICE_HEAVY_DOWNLOAD_URL: http://client-heavy:9000/retrieve
+      SERVICE_HEAVY_TERMINATE_URL: http://client-heavy:9000/kill
       SERVICE_HEAVY_RUNS_PER_USER: 2
 
   client-light:
@@ -132,6 +136,8 @@ services:
   client-heavy:
     image: ghcr.io/rvhonorato/job-orchestrator:latest
     command: client
+    ports:
+      - "9001:9000"
     deploy:
       resources:
         limits:

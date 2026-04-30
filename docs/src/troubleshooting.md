@@ -160,6 +160,53 @@ Common issues and solutions for job-orchestrator.
    docker network inspect job-orchestrator_default
    ```
 
+### Termination Fails
+
+**Symptom**: Job remains `Running` or `Submitted` after termination request
+
+**Possible Causes**:
+
+1. **Job not in a terminable state**
+   - Only jobs in `Queued`, `Submitted`, or `Running` can be terminated
+   - Already completed or failed jobs cannot be terminated
+   - Solution: Check job status first with `GET /download/:id`
+
+2. **Client unreachable**
+   - Server cannot reach client to send termination request
+   - Verify client connectivity:
+   ```bash
+   curl http://client:9000/health
+   ```
+
+3. **Process already terminated**
+   - The process may have finished between the request and processing
+   - Solution: Check job status again, it may already be `Completed`
+
+4. **Missing TERMINATE_URL configuration**
+   - Server needs `SERVICE_<NAME>_TERMINATE_URL` configured
+   - Solution: Add to server configuration:
+   ```bash
+   export SERVICE_EXAMPLE_TERMINATE_URL=http://client:9000/kill
+   ```
+
+### Jobs Stuck in Locked
+
+**Symptom**: Job stays in `Locked` status indefinitely
+
+**Possible Causes**:
+
+1. **Client not responding to termination request**
+   - Client may be overloaded or crashed
+   - Check client logs for errors
+
+2. **Server-client communication timeout**
+   - Network issues between server and client
+   - Verify network connectivity
+
+3. **Termination failed, restore in progress**
+   - If termination fails, server attempts to restore job
+   - Check server logs for details
+
 ### Jobs Stuck in Prepared
 
 **Symptom**: Payloads stay in `Prepared` status

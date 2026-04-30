@@ -16,8 +16,9 @@ job-orchestrator is a central component of [WeNMR](https://wenmr.science.uu.nl),
   - [DIRAC Interware](https://dirac.readthedocs.io/en/latest/index.html) *(planned)*
   - SLURM clusters *(planned)*
   - Educational cloud services *(planned)*
-- **RESTful API**: Simple HTTP interface for job submission and retrieval
+- **RESTful API**: Simple HTTP interface for job submission, retrieval, and cancellation
 - **Automatic Cleanup**: Configurable retention policies for completed jobs
+- **Job Termination**: Cancel running jobs via API endpoints
 
 ## Use Cases
 

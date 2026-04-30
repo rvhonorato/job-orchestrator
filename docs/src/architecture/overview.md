@@ -12,14 +12,14 @@ flowchart TB
         Cleaner["Cleaner<br>60s"]
   end
  subgraph Server["Orchestrator Server"]
-        API["REST API<br>upload/download"]
+        API["REST API<br>upload/download/terminate"]
         DB[("SQLite<br>Persistent")]
         FS[/"Filesystem<br>Job Storage"/]
         Tasks
         Queue["Queue Manager<br>Quota Enforcement"]
   end
  subgraph Client["Client Service"]
-        ClientAPI["REST API<br>submit/retrieve/load"]
+        ClientAPI["REST API<br>submit/retrieve/kill/load"]
         ClientDB[("SQLite<br>In-Memory")]
         ClientFS[/"Working Dir"/]
         Runner["Runner Task<br>500ms"]
@@ -88,6 +88,15 @@ Each client node handles:
 6. **Getter** task retrieves results, stores locally
 7. **User** downloads results via `GET /download/:id`
 8. **Cleaner** task removes job after retention period
+
+## Termination Flow
+
+1. **User** sends termination request via `POST /terminate/:id`
+2. **Server** locks job (status: `Locked`) and forwards to client
+3. **Client** receives request via `POST /kill/:id`, sends SIGTERM to process
+4. **Client** updates payload status to `Killed`
+5. **Server** detects status change, updates job to `Killed`
+6. **Server** returns termination confirmation to user
 
 ## Auto-Scaling Architecture (Planned)
 
