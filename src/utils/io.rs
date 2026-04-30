@@ -252,6 +252,16 @@ pub fn validate_script(path: &std::path::PathBuf) -> Result<(), ClientError> {
         }
     }
 
+    // Ensure script has the required trap for exit code capture
+    if !content.contains("trap")
+        || !content.contains(".orchestrator.exit")
+        || !content.contains("EXIT")
+    {
+        return Err(ClientError::MissingRequirement {
+            reason: "Missing required trap for exit code capture. Add: trap 'echo $? > .orchestrator.exit' EXIT".to_string(),
+        });
+    }
+
     Ok(())
 }
 
