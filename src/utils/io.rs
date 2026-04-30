@@ -296,6 +296,15 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_script_missing_trap() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let script_path = temp_dir.path().join("run.sh");
+        fs::write(&script_path, b"#!/bin/bash\necho 'Hello, World!'\nexit 0\n").unwrap();
+        let result = validate_script(&script_path);
+        assert!(matches!(result, Err(ClientError::MissingRequirement { .. })));
+    }
+
+    #[test]
     fn test_validate_script_rm_rf() {
         let temp_dir = tempfile::tempdir().unwrap();
         let script_path = temp_dir.path().join("run.sh");
