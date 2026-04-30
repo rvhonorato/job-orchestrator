@@ -199,7 +199,7 @@ pub async fn upload(State(state): State<AppState>, mut multipart: Multipart) -> 
 }
 
 #[utoipa::path(
-    get,
+    post,
     path = "/terminate/{id}",
     params(
         ("id" = u32, Path, description = "Job identifier")
@@ -651,5 +651,127 @@ mod tests {
             "Expected error about output file, got: {}",
             body.message
         );
+    }
+
+    #[tokio::test]
+    async fn test_terminate_not_found() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_routes(pool, config);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/terminate/9999")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            body.message.to_lowercase().contains("not found") && body.message.contains("9999"),
+            "Expected 'not found' message mentioning job id, got: {}",
+            body.message
+        );
+    }
+
+    #[tokio::test]
+    async fn test_terminate_success() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        // Create and add a job to the database
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+        job.add_to_db(&pool).await.unwrap();
+        job.update_dest_id(42, &pool).await.unwrap();
+        job.update_status(Status::Running, &pool).await.unwrap();
+        let job_id = job.id;
+
+        // Mock the terminate endpoint
+        let mut server = mockito::Server::new_async().await;
+
+        let mock = server
+            .mock("POST", "/terminate/42")
+            .with_status(200)
+            .create_async()
+            .await;
+
+        // Update config to use mock server URL
+        let mut config_with_mock = config;
+        if let Some(service) = config_with_mock.services.get_mut("test") {
+            service.terminate_url = format!("{}/terminate", server.url());
+        }
+
+        let app = create_routes(pool, config_with_mock);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/terminate/{job_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body.id, job_id);
+        assert!(body.message.to_lowercase().contains("terminated"));
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_terminate_failure() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        // Create and add a job to the database
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+        job.add_to_db(&pool).await.unwrap();
+        job.update_dest_id(42, &pool).await.unwrap();
+        job.update_status(Status::Running, &pool).await.unwrap();
+        let job_id = job.id;
+
+        // Mock the terminate endpoint to return 500
+        let mut server = mockito::Server::new_async().await;
+
+        let mock = server
+            .mock("POST", "/terminate/42")
+            .with_status(500)
+            .create_async()
+            .await;
+
+        // Update config to use mock server URL
+        let mut config_with_mock = config;
+        if let Some(service) = config_with_mock.services.get_mut("test") {
+            service.terminate_url = format!("{}/terminate", server.url());
+        }
+
+        let app = create_routes(pool, config_with_mock);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/terminate/{job_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert!(body.message.to_lowercase().contains("could not terminate"));
+
+        mock.assert_async().await;
     }
 }

@@ -723,4 +723,68 @@ mod test {
         let retrieved = Payload::retrieve_id(payload.id, &pool).await.unwrap();
         assert_eq!(retrieved.status, Status::Failed);
     }
+
+    // ===== terminate() tests =====
+
+    #[tokio::test]
+    async fn test_terminate_success() {
+        let mut server = Server::new_async().await;
+
+        let mock = server
+            .mock("POST", "/123")
+            .with_status(200)
+            .create_async()
+            .await;
+
+        let client = Client;
+        let mut job = Job::new("/tmp");
+        job.dest_id = 123;
+
+        let result = client.terminate(&job, &server.url()).await;
+
+        mock.assert_async().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_terminate_http_error() {
+        let mut server = Server::new_async().await;
+
+        let mock = server
+            .mock("POST", "/456")
+            .with_status(500)
+            .create_async()
+            .await;
+
+        let client = Client;
+        let mut job = Job::new("/tmp");
+        job.dest_id = 456;
+
+        let result = client.terminate(&job, &server.url()).await;
+
+        mock.assert_async().await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            TerminateError::HttpError(status) => assert_eq!(status, 500),
+            _ => panic!("Expected HttpError"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_terminate_request_error() {
+        let client = Client;
+        let mut job = Job::new("/tmp");
+        job.dest_id = 789;
+
+        // Use an invalid URL that will cause a connection error
+        let result = client
+            .terminate(&job, "http://invalid-url-that-does-not-exist-12345.com")
+            .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            TerminateError::GenericError => {}
+            _ => panic!("Expected GenericError"),
+        }
+    }
 }

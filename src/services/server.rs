@@ -346,4 +346,109 @@ mod test {
 
         assert_eq!(_job.status, Status::Cleaned);
     }
+
+    #[tokio::test]
+    async fn test_terminate_job_success() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = SqlitePool::connect(":memory:")
+            .await
+            .unwrap_or_else(|e| panic!("Database connection failed: {e}"));
+        create_jobs_table(&pool).await.unwrap();
+
+        let mut config = Config::new().unwrap();
+        config.services.insert(
+            "test".to_string(),
+            Service {
+                name: "test".to_string(),
+                upload_url: "http://example.com/upload".to_string(),
+                download_url: "http://example.com/download".to_string(),
+                terminate_url: "http://example.com/terminate".to_string(),
+                runs_per_user: 5,
+            },
+        );
+
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_service("test".to_string());
+        job.set_user_id(1);
+        job.update_dest_id(42, &pool).await.unwrap();
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Running, &pool).await.unwrap();
+        let job_id = job.id;
+
+        // Use mockito to mock the HTTP call
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/terminate/42")
+            .with_status(200)
+            .create_async()
+            .await;
+
+        // Update config to use mock server URL
+        if let Some(service) = config.services.get_mut("test") {
+            service.terminate_url = format!("{}/terminate", server.url());
+        }
+
+        let result = terminate_job(job, pool.clone(), config).await;
+        assert!(result.is_ok());
+
+        // Verify the job status was updated to Killed
+        let mut updated_job = Job::new("");
+        updated_job.retrieve_id(job_id, &pool).await.unwrap();
+        assert_eq!(updated_job.status, Status::Killed);
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_terminate_job_failure() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = SqlitePool::connect(":memory:")
+            .await
+            .unwrap_or_else(|e| panic!("Database connection failed: {e}"));
+        create_jobs_table(&pool).await.unwrap();
+
+        let mut config = Config::new().unwrap();
+        config.services.insert(
+            "test".to_string(),
+            Service {
+                name: "test".to_string(),
+                upload_url: "http://example.com/upload".to_string(),
+                download_url: "http://example.com/download".to_string(),
+                terminate_url: "http://example.com/terminate".to_string(),
+                runs_per_user: 5,
+            },
+        );
+
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_service("test".to_string());
+        job.set_user_id(1);
+        job.update_dest_id(42, &pool).await.unwrap();
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Running, &pool).await.unwrap();
+        let job_id = job.id;
+        let original_status = job.status;
+
+        // Mock the terminate endpoint to return 500
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/terminate/42")
+            .with_status(500)
+            .create_async()
+            .await;
+
+        // Update config to use mock server URL
+        if let Some(service) = config.services.get_mut("test") {
+            service.terminate_url = format!("{}/terminate", server.url());
+        }
+
+        let result = terminate_job(job, pool.clone(), config).await;
+        assert!(result.is_err());
+
+        // Verify the job status was restored to original
+        let mut updated_job = Job::new("");
+        updated_job.retrieve_id(job_id, &pool).await.unwrap();
+        assert_eq!(updated_job.status, original_status);
+
+        mock.assert_async().await;
+    }
 }
