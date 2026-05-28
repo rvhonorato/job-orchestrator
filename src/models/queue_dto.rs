@@ -42,14 +42,7 @@ impl Queue<'_> {
 
     pub async fn load(&mut self, pool: &SqlitePool) -> Result<(), sqlx::Error> {
         // ===========================================================================================
-        // Step 1: Get all QUEUED jobs
-        let rows = sqlx::query("SELECT * FROM jobs WHERE status = ?")
-            .bind(Status::Queued.to_string())
-            .fetch_all(pool)
-            .await?;
-
-        // ===========================================================================================
-        // Step 2: Get submitted job counts per user/service
+        // Step 1a: get how many jobs have been submitted to the service
         let submitted_rows = sqlx::query(
             "SELECT user_id, service, COUNT(*) as count FROM jobs WHERE status = 'submitted' GROUP BY user_id, service"
         )
@@ -63,52 +56,92 @@ impl Queue<'_> {
             submitted_counts.insert((user_id, service), count as u16);
         }
 
+        // Step 1b: get submitted job counts per service (for max_runs limit)
+        let submitted_service_rows = sqlx::query(
+            "SELECT service, COUNT(*) as count FROM jobs WHERE status = 'submitted' GROUP BY service"
+        )
+        .fetch_all(pool)
+        .await?;
+        let mut submitted_service_counts: HashMap<String, u16> = HashMap::new();
+        for row in submitted_service_rows {
+            let service: String = row.get("service");
+            let count: i64 = row.get("count");
+            submitted_service_counts.insert(service, count as u16);
+        }
+
         // ===========================================================================================
-        // Step 3: Filter jobs according to config limits
+        // Step 2: Filter jobs according to config limits
+
         // jobs_by_user_service will hold the jobs to be processed
         let mut jobs_by_user_service: HashMap<(i64, String), Vec<Job>> = HashMap::new();
+
         // service_limits will cache the limits per service, so we don't have to look them up
         // multiple times
         let mut service_limits: HashMap<String, u16> = HashMap::new();
+
+        // service_max_runs will cache the max_runs per service
+        let mut service_max_runs: HashMap<String, u16> = HashMap::new();
+
+        // service_queued_counts will track how many jobs we're queuing per service in this batch
+        let mut service_queued_counts: HashMap<String, usize> = HashMap::new();
+
+        // Get all the QUEUED jobs, these are the ones waiting to be sent
+        let rows = sqlx::query("SELECT * FROM jobs WHERE status = ?")
+            .bind(Status::Queued.to_string())
+            .fetch_all(pool)
+            .await?;
+
         for row in rows {
             let user_id: i64 = row.get("user_id");
             let service: String = row.get("service");
-            // let status: String = row.get("status");
-            // info!(
-            //     "DB Row: user_id={}, service={}, status={}",
-            //     user_id, service, status
-            // );
 
-            // Check what is the limit for this service
-            let limit = *service_limits.entry(service.clone()).or_insert_with(|| {
+            // Check what is the limit per user for this service
+            let quota_per_user = *service_limits.entry(service.clone()).or_insert_with(|| {
                 self.config
                     .services
                     .get(&service)
                     .map(|s| s.runs_per_user)
                     .unwrap()
             });
-            // let limit = 5;
-            let submitted = *submitted_counts
+
+            // Check what is the max limit for this service
+            let quota_total = *service_max_runs.entry(service.clone()).or_insert_with(|| {
+                self.config
+                    .services
+                    .get(&service)
+                    .map(|s| s.max_runs)
+                    .unwrap()
+            });
+
+            let user_submitted = *submitted_counts
                 .get(&(user_id, service.clone()))
                 .unwrap_or(&0);
-            // info!(
-            //     "User: {}, Service: {}, Submitted: {}, Limit: {}",
-            //     user_id, service, submitted, limit
-            // );
+
+            // Get total submitted count for this service
+            let service_submitted = *submitted_service_counts.get(&service).unwrap_or(&0);
+
+            // Track how many jobs we're queuing for this service in this batch
+            let queued_for_service = service_queued_counts.entry(service.clone()).or_default();
+
             // Check if this user/service combo can take more jobs
             let key = (user_id, service.clone());
             let user_queue = jobs_by_user_service.entry(key).or_default();
-            let remaining_slots = (limit - submitted) as usize;
-            // if submitted < limit, we can add more jobs, it has not yet reached the limit
-            // if user_queue.len() < remaining_slots, we can still add to this user's queue
-            // info!(
-            //     "User: {}, Service: {}, Current Queue Length: {}, Remaining Slots: {}",
-            //     user_id,
-            //     service,
-            //     user_queue.len(),
-            //     remaining_slots
-            // );
-            if submitted < limit && user_queue.len() < remaining_slots {
+            let user_remaining_slots = (quota_per_user - user_submitted) as usize;
+
+            // Check if adding this job would exceed `max_runs` for the service
+            // submitted_service + *queued_for_service + 1 (this job) <= max_runs
+            let would_exceed_max_runs = {
+                let total_if_added = service_submitted as usize + *queued_for_service + 1;
+                total_if_added > quota_total as usize
+            };
+
+            // Only add job if:
+            // 1. User hasn't reached their per-user limit
+            // 2. Service hasn't reached its `max_runs` limit (including this job)
+            if user_submitted < quota_per_user
+                && user_queue.len() < user_remaining_slots
+                && !would_exceed_max_runs
+            {
                 let status: String = row.get("status");
                 let loc: String = row.get("loc");
                 user_queue.push(Job {
@@ -119,12 +152,20 @@ impl Queue<'_> {
                     loc: PathBuf::from(loc),
                     dest_id: row.get("dest_id"),
                 });
+
+                // Increment the count for this service
+                *queued_for_service += 1;
+
+                // Update the hashmap
+                *service_queued_counts.entry(service.clone()).or_default() = *queued_for_service;
             }
         }
 
         // ===========================================================================================
         // Step 4: Flatten the jobs_by_user_service into self.jobs
         self.jobs = jobs_by_user_service.into_values().flatten().collect();
+
+        // Done
         Ok(())
     }
 }
@@ -187,6 +228,7 @@ mod tests {
                 download_url: "http://example.com/download".to_string(),
                 terminate_url: "http://example.com/terminate".to_string(),
                 runs_per_user: 5,
+                max_runs: 1,
             },
         );
 
@@ -224,8 +266,9 @@ mod tests {
                 name: "A".to_string(),
                 upload_url: "http://example.com/upload_a".to_string(),
                 download_url: "http://example.com/download_a".to_string(),
-                terminate_url: "http://example.com/terminate".to_string(),
+                terminate_url: "http://example.com/terminate_a".to_string(),
                 runs_per_user: 5,
+                max_runs: 10, // High enough to allow multiple users
             },
         );
         config.services.insert(
@@ -234,8 +277,9 @@ mod tests {
                 name: "B".to_string(),
                 upload_url: "http://example.com/upload_b".to_string(),
                 download_url: "http://example.com/download_b".to_string(),
-                terminate_url: "http://example.com/terminate".to_string(),
+                terminate_url: "http://example.com/terminate_b".to_string(),
                 runs_per_user: 5,
+                max_runs: 10, // High enough to allow multiple users
             },
         );
         config.services.insert(
@@ -244,8 +288,9 @@ mod tests {
                 name: "C".to_string(),
                 upload_url: "http://example.com/upload_c".to_string(),
                 download_url: "http://example.com/download_c".to_string(),
-                terminate_url: "http://example.com/terminate".to_string(),
+                terminate_url: "http://example.com/terminate_c".to_string(),
                 runs_per_user: 1,
+                max_runs: 3, // Allow 3 total: 2 for users 1+2, 1 for user 3
             },
         );
 
@@ -306,7 +351,7 @@ mod tests {
         let expected_a = 2;
         assert_eq!(jobs_for_a, expected_a,);
 
-        // Add jobs for service C, which has a limit of 1
+        // Add jobs for service C, which has a limit of 1 per user and max_runs of 3
         // Add two queued jobs for user 1 - service C
         for _ in 0..2 {
             sqlx::query("INSERT INTO jobs (user_id, service, status, loc, dest_id) VALUES (1, 'C', 'queued', 'loc', NULL)")
@@ -320,7 +365,8 @@ mod tests {
         // Reload the queue
         queue.load(&pool).await.unwrap();
 
-        // Since the limit for service C per user is 1, there should be two jobs loaded in total
+        // Since the limit for service C per user is 1 and max_runs is 3,
+        // there should be two jobs loaded (one per user 1 and 2)
         let jobs_for_c = queue.jobs.iter().filter(|j| j.service == "C").count();
         let expected_c = 2;
         assert_eq!(jobs_for_c, expected_c);
@@ -346,6 +392,65 @@ mod tests {
         let jobs_for_user3: Vec<&Job> = queue.jobs.iter().filter(|j| j.user_id == 3).collect();
         let expected_user3 = 8; // 3 (A) + 4 (B) + 1 (C)
         assert_eq!(jobs_for_user3.len(), expected_user3);
+    }
+
+    #[tokio::test]
+    async fn test_load_respects_max_runs_per_service() {
+        // Test that max_runs limits total concurrent jobs per service
+        let pool = SqlitePool::connect(":memory:")
+            .await
+            .unwrap_or_else(|e| panic!("Database connection failed: {e}"));
+        let mut config = Config::new().unwrap();
+        config.services.insert(
+            "test_service".to_string(),
+            Service {
+                name: "test_service".to_string(),
+                upload_url: "http://example.com/upload".to_string(),
+                download_url: "http://example.com/download".to_string(),
+                terminate_url: "http://example.com/terminate".to_string(),
+                runs_per_user: 10, // High per-user limit
+                max_runs: 2,       // But only 2 total concurrent per service
+            },
+        );
+
+        create_jobs_table(&pool).await.unwrap();
+
+        // Insert 5 submitted jobs for service "test_service" (across different users)
+        for user_id in 1..=5 {
+            sqlx::query(&format!("INSERT INTO jobs (user_id, service, status, loc, dest_id) VALUES ({}, 'test_service', 'submitted', 'loc', NULL)", user_id))
+                .execute(&pool).await.unwrap();
+        }
+
+        // Insert 5 queued jobs for service "test_service" (across different users)
+        for user_id in 1..=5 {
+            sqlx::query(&format!("INSERT INTO jobs (user_id, service, status, loc, dest_id) VALUES ({}, 'test_service', 'queued', 'loc', NULL)", user_id))
+                .execute(&pool).await.unwrap();
+        }
+
+        // Load the queue
+        let mut queue = Queue::new(&config);
+        queue.load(&pool).await.unwrap();
+
+        // Since max_runs is 2 and there are already 5 submitted,
+        // no queued jobs should be loaded (service has reached max_runs)
+        let jobs_loaded = queue.jobs.len();
+        assert_eq!(
+            jobs_loaded, 0,
+            "No jobs should be loaded when max_runs is exceeded for the service"
+        );
+
+        // Now test with available slots: remove submitted jobs to create space
+        sqlx::query("DELETE FROM jobs WHERE status = 'submitted'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Reload the queue
+        queue.load(&pool).await.unwrap();
+
+        // Now with 0 submitted, we should be able to load up to max_runs (2) queued jobs
+        let jobs_loaded = queue.jobs.len();
+        assert_eq!(jobs_loaded, 2, "Should load up to max_runs (2) jobs");
     }
 
     #[tokio::test]
