@@ -155,9 +155,6 @@ impl Queue<'_> {
 
                 // Increment the count for this service
                 *queued_for_service += 1;
-
-                // Update the hashmap
-                *service_queued_counts.entry(service.clone()).or_default() = *queued_for_service;
             }
         }
 

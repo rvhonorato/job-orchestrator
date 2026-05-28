@@ -344,6 +344,7 @@ mod tests {
             "SERVICE_FOO_DOWNLOAD_URL",
             "SERVICE_FOO_TERMINATE_URL",
             "SERVICE_FOO_RUNS_PER_USER",
+            "SERVICE_FOO_MAX_RUNS",
         ]);
 
         let service = config
