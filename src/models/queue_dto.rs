@@ -44,7 +44,7 @@ impl Queue<'_> {
         // ===========================================================================================
         // Step 1a: get how many jobs have been submitted to the service per user
         let submitted_rows = sqlx::query(
-            "SELECT user_id, service, COUNT(*) as count FROM jobs WHERE status = 'submitted' GROUP BY user_id, service"
+            "SELECT user_id, service, COUNT(*) as count FROM jobs WHERE status IN ('processing', 'submitted', 'running') GROUP BY user_id, service"
         )
         .fetch_all(pool)
         .await?;
@@ -58,7 +58,7 @@ impl Queue<'_> {
 
         // Step 1b: get submitted job counts per service (for max_runs limit)
         let submitted_service_rows = sqlx::query(
-            "SELECT service, COUNT(*) as count FROM jobs WHERE status = 'submitted' GROUP BY service"
+            "SELECT service, COUNT(*) as count FROM jobs WHERE status IN ('processing', 'submitted', 'running')  GROUP BY service"
         )
         .fetch_all(pool)
         .await?;
