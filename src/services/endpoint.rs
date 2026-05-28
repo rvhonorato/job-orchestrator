@@ -149,6 +149,7 @@ mod tests {
                 download_url: "http://example.com/download".to_string(),
                 terminate_url: "http://example.com/terminate".to_string(),
                 runs_per_user: 5,
+                max_runs: 1,
             },
         );
         Config {

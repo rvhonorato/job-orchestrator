@@ -21,6 +21,7 @@ pub struct Service {
     pub download_url: String,
     pub terminate_url: String,
     pub runs_per_user: u16,
+    pub max_runs: u16,
 }
 
 impl Config {
@@ -34,6 +35,7 @@ impl Config {
             // - SERVICE_<NAME>_DOWNLOAD_URL
             // - SERVICE_<NAME>_RUNS_PER_USER
             // - SERVICE_<NAME>_TERMINATE_URL
+            // - SERVICE_<NAME>_MAX_RUNS
             if key.starts_with("SERVICE_") {
                 let parts: Vec<&str> = key.split('_').collect();
                 if parts.len() >= 3 {
@@ -49,6 +51,7 @@ impl Config {
                             download_url: String::new(),
                             terminate_url: String::new(),
                             runs_per_user: 5, // by default consider 5 runs per user per service
+                            max_runs: 1,      // by default run only 1 payload at a time
                         });
 
                     // Assign the corresponding vars to the config
@@ -56,6 +59,7 @@ impl Config {
                         "UPLOAD_URL" => service.upload_url = value,
                         "DOWNLOAD_URL" => service.download_url = value,
                         "RUNS_PER_USER" => service.runs_per_user = value.parse::<u16>().unwrap(),
+                        "MAX_RUNS" => service.max_runs = value.parse::<u16>().unwrap(),
                         "TERMINATE_URL" => service.terminate_url = value,
                         _ => continue,
                     };
@@ -152,6 +156,7 @@ mod tests {
                 download_url: "http://test.com/download".to_string(),
                 terminate_url: "http://example.com/terminate".to_string(),
                 runs_per_user: 10,
+                max_runs: 1,
             },
         );
 
@@ -174,6 +179,7 @@ mod tests {
             download_url: "http://example.com/download".to_string(),
             terminate_url: "http://example.com/terminate".to_string(),
             runs_per_user: 5,
+            max_runs: 1,
         };
 
         assert_eq!(service.name, "test");
@@ -258,6 +264,7 @@ mod tests {
                 download_url: "http://s1.com/download".to_string(),
                 terminate_url: "http://s1.com/terminate".to_string(),
                 runs_per_user: 5,
+                max_runs: 1,
             },
         );
 
@@ -269,6 +276,7 @@ mod tests {
                 download_url: "http://s2.com/download".to_string(),
                 terminate_url: "http://s2.com/terminate".to_string(),
                 runs_per_user: 10,
+                max_runs: 1,
             },
         );
 
@@ -328,6 +336,7 @@ mod tests {
             env::set_var("SERVICE_FOO_DOWNLOAD_URL", "http://foo.com/download");
             env::set_var("SERVICE_FOO_TERMINATE_URL", "http://foo.com/terminate");
             env::set_var("SERVICE_FOO_RUNS_PER_USER", "3");
+            env::set_var("SERVICE_FOO_MAX_RUNS", "2");
         }
         let config = Config::new().unwrap();
         cleanup_env(&[
@@ -335,6 +344,7 @@ mod tests {
             "SERVICE_FOO_DOWNLOAD_URL",
             "SERVICE_FOO_TERMINATE_URL",
             "SERVICE_FOO_RUNS_PER_USER",
+            "SERVICE_FOO_MAX_RUNS",
         ]);
 
         let service = config
@@ -345,6 +355,7 @@ mod tests {
         assert_eq!(service.download_url, "http://foo.com/download");
         assert_eq!(service.terminate_url, "http://foo.com/terminate");
         assert_eq!(service.runs_per_user, 3);
+        assert_eq!(service.max_runs, 2);
     }
 
     #[test]

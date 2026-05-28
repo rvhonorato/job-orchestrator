@@ -250,6 +250,7 @@ mod test {
                 download_url: format!("{}/retrieve", server.url()),
                 terminate_url: format!("{}/terminate", server.url()),
                 runs_per_user: 5,
+                max_runs: 1,
             },
         );
 
@@ -285,6 +286,7 @@ mod test {
                 download_url: "http://example.com/download_a".to_string(),
                 terminate_url: "http://example.com/terminate_a".to_string(),
                 runs_per_user: 5,
+                max_runs: 1,
             },
         );
 
@@ -364,6 +366,7 @@ mod test {
                 download_url: "http://example.com/download".to_string(),
                 terminate_url: "http://example.com/terminate".to_string(),
                 runs_per_user: 5,
+                max_runs: 1,
             },
         );
 
@@ -416,6 +419,7 @@ mod test {
                 download_url: "http://example.com/download".to_string(),
                 terminate_url: "http://example.com/terminate".to_string(),
                 runs_per_user: 5,
+                max_runs: 1,
             },
         );
 
