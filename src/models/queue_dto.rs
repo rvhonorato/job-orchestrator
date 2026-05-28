@@ -135,31 +135,33 @@ impl Queue<'_> {
                 .filter(|(_, _, slots)| *slots > 0)
                 .collect();
 
-            // Round-robin: cycle through users, taking one job at a time
+            // never remove users, just skip them - this will ensure all users get a slot
             let mut service_count = 0;
             let mut index = 0;
+            let users_len = users.len();
 
-            while service_count < available_service_slots && !users.is_empty() {
-                let user_index = index % users.len();
-                let (_, ref mut jobs, ref mut available_slots) = users[user_index];
+            while service_count < available_service_slots {
+                let mut found = false;
+                for _ in 0..users_len {
+                    let user_index = index % users_len;
+                    let (_, ref mut jobs, ref mut available_slots) = users[user_index];
 
-                if !jobs.is_empty() && *available_slots > 0 {
-                    // Take one job from this user
-                    let job = jobs.remove(0);
-                    self.jobs.push(job);
-                    service_count += 1;
-                    *available_slots -= 1;
+                    if !jobs.is_empty() && *available_slots > 0 {
+                        let job = jobs.remove(0);
+                        self.jobs.push(job);
+                        service_count += 1;
+                        *available_slots -= 1;
+                        found = true;
+                        index = (user_index + 1) % users_len; // Move to next user
+                        break;
+                    }
+
+                    index += 1;
                 }
 
-                // Remove user if exhausted (no more jobs or no more slots)
-                if jobs.is_empty() || *available_slots == 0 {
-                    users.remove(user_index);
-                    // Adjust index after removal
-                    if index >= users.len() {
-                        index = 0;
-                    }
-                } else {
-                    index += 1;
+                // If we looped through all users and found nothing, we're done
+                if !found {
+                    break;
                 }
             }
         }
