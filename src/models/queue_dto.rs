@@ -126,7 +126,7 @@ impl Queue<'_> {
             // Check if this user/service combo can take more jobs
             let key = (user_id, service.clone());
             let user_queue = jobs_by_user_service.entry(key).or_default();
-            let user_remaining_slots = (quota_per_user - user_submitted) as usize;
+            let user_remaining_slots = quota_per_user.saturating_sub(user_submitted) as usize;
 
             // Check if adding this job would exceed `max_runs` for the service
             // submitted_service + *queued_for_service + 1 (this job) <= max_runs
