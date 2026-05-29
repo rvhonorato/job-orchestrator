@@ -1,4 +1,5 @@
 use crate::models::status_dto::Status;
+use crate::utils;
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
@@ -36,6 +37,14 @@ impl Job {
         Ok(buffer)
     }
 
+    /// Zip the job directory to bytes, regardless of its current state.
+    /// This is used for partial downloads to debug stuck or incomplete runs.
+    pub fn download_partial(self) -> Result<Vec<u8>, std::io::Error> {
+        // Zip the directory to bytes directly
+        utils::io::zip_directory_to_bytes(&self.loc)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+    }
+
     pub fn remove_from_disk(&self) -> Result<(), std::io::Error> {
         fs::remove_dir_all(&self.loc)
     }
@@ -58,6 +67,7 @@ mod test {
 
     use super::*;
     use std::fs;
+    use std::io::Read;
     use std::path::Path;
     use tempfile::TempDir;
 
@@ -102,5 +112,46 @@ mod test {
         let mut job = Job::new("");
         job.set_user_id(99);
         assert_eq!(job.user_id, 99)
+    }
+
+    #[test]
+    fn test_download_partial() {
+        let tempdir = TempDir::new().unwrap();
+        let job = Job::new(tempdir.path().to_str().unwrap());
+
+        // Create job directory with some files
+        fs::create_dir_all(&job.loc).unwrap();
+        fs::write(job.loc.join("file1.txt"), b"data 1").unwrap();
+        fs::write(job.loc.join("file2.txt"), b"data 2").unwrap();
+
+        let result = job.download_partial().unwrap();
+        assert!(!result.is_empty());
+
+        // Verify the zip contains our files
+        let cursor = std::io::Cursor::new(result);
+        let mut archive = zip::ZipArchive::new(cursor).unwrap();
+        assert!(archive.len() >= 2);
+
+        let mut file1 = archive.by_name("file1.txt").unwrap();
+        let mut contents = String::new();
+        file1.read_to_string(&mut contents).unwrap();
+        assert_eq!(contents, "data 1");
+    }
+
+    #[test]
+    fn test_download_partial_empty_directory() {
+        let tempdir = TempDir::new().unwrap();
+        let job = Job::new(tempdir.path().to_str().unwrap());
+
+        // Create empty job directory
+        fs::create_dir_all(&job.loc).unwrap();
+
+        let result = job.download_partial().unwrap();
+        assert!(!result.is_empty());
+
+        // Verify the zip is empty
+        let cursor = std::io::Cursor::new(result);
+        let archive = zip::ZipArchive::new(cursor).unwrap();
+        assert_eq!(archive.len(), 0);
     }
 }
