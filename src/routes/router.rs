@@ -1,11 +1,12 @@
 use crate::config::loader::Config;
-use crate::controllers::client::{kill, load, retrieve, submit};
+use crate::controllers::client::{kill, load, retrieve, retrieve_partial, submit};
 use crate::controllers::health::__path_health;
 use crate::controllers::health::health;
 use crate::controllers::ping::ping;
 use crate::controllers::server::__path_download;
+use crate::controllers::server::__path_download_partial;
 use crate::controllers::server::__path_upload;
-use crate::controllers::server::{download, terminate, upload};
+use crate::controllers::server::{download, download_partial, terminate, upload};
 use crate::models::health_dto::Health;
 use crate::models::job_dao::Job;
 use axum::extract::DefaultBodyLimit;
@@ -32,6 +33,7 @@ pub struct AppState {
     paths(
         upload,
         download,
+        download_partial,
         health
     ),
     components(
@@ -51,6 +53,7 @@ pub fn create_routes(pool: SqlitePool, config: Config) -> Router {
         .route("/health", get(health))
         .route("/upload", post(upload))
         .route("/download/{id}", get(download))
+        .route("/download_partial/{id}", get(download_partial))
         .route("/terminate/{id}", post(terminate))
         .merge(SwaggerUi::new("/swagger").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .with_state(state)
@@ -79,6 +82,7 @@ pub fn create_client_routes(pool: SqlitePool, config: Config) -> Router {
         .route("/load", get(load))
         .route("/submit", post(submit))
         .route("/retrieve/{id}", get(retrieve))
+        .route("/retrieve_partial/{id}", get(retrieve_partial))
         .route("/kill/{id}", post(kill))
         .with_state(state)
         .layer(
