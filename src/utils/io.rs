@@ -74,11 +74,12 @@ pub async fn save_file(
     Ok(())
 }
 
-pub fn zip_directory(src_dir: &PathBuf, dst_file: &PathBuf) -> zip::result::ZipResult<()> {
-    // Create the output file
-    let file = File::create(dst_file)?;
-    let mut zip = ZipWriter::new(file);
-
+/// Internal helper function to write directory contents to a ZipWriter
+/// Returns the writer after finishing the zip
+pub(crate) fn write_directory_to_zip<W: std::io::Write + std::io::Seek>(
+    src_dir: &PathBuf,
+    mut zip: ZipWriter<W>,
+) -> zip::result::ZipResult<W> {
     // Set options for the zip file with explicit type annotation
     let options: FileOptions<()> = FileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
@@ -111,9 +112,9 @@ pub fn zip_directory(src_dir: &PathBuf, dst_file: &PathBuf) -> zip::result::ZipR
                 // Add file to the zip archive
                 zip.start_file(name_str, options)?;
                 let mut f = File::open(path)?;
-                let mut buffer = Vec::new();
-                f.read_to_end(&mut buffer)?;
-                zip.write_all(&buffer)?;
+                let mut file_buffer = Vec::new();
+                f.read_to_end(&mut file_buffer)?;
+                zip.write_all(&file_buffer)?;
             }
         } else {
             return Err(zip::result::ZipError::Io(io::Error::new(
@@ -123,8 +124,27 @@ pub fn zip_directory(src_dir: &PathBuf, dst_file: &PathBuf) -> zip::result::ZipR
         }
     }
 
-    zip.finish()?;
+    zip.finish()
+}
+
+pub fn zip_directory(src_dir: &PathBuf, dst_file: &PathBuf) -> zip::result::ZipResult<()> {
+    // Create the output file
+    let file = File::create(dst_file)?;
+    let zip = ZipWriter::new(file);
+
+    // write_directory_to_zip consumes the zip writer and returns the underlying writer
+    write_directory_to_zip(src_dir, zip)?;
     Ok(())
+}
+
+/// Zip a directory to a byte vector (in-memory)
+pub fn zip_directory_to_bytes(src_dir: &PathBuf) -> zip::result::ZipResult<Vec<u8>> {
+    let buffer = Vec::new();
+    let zip = ZipWriter::new(std::io::Cursor::new(buffer));
+
+    // write_directory_to_zip consumes the zip writer and returns the underlying Cursor
+    let cursor = write_directory_to_zip(src_dir, zip)?;
+    Ok(cursor.into_inner())
 }
 
 /// Validate a script for dangerous patterns before execution.
@@ -689,5 +709,301 @@ mod tests {
         let zip_path = PathBuf::from("/nonexistent/path/output.zip");
         let result = zip_directory(&src_dir, &zip_path);
         assert!(result.is_err());
+    }
+
+    // ===== zip_directory_to_bytes tests ===== 
+
+    #[test]
+    fn test_zip_directory_to_bytes_single_file() -> zip::result::ZipResult<()> {
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("source");
+        std::fs::create_dir(&src_dir).unwrap();
+
+        // Create a single file
+        let file_path = src_dir.join("test.txt");
+        std::fs::write(&file_path, b"Hello, World!").unwrap();
+
+        // Zip it
+        let bytes = zip_directory_to_bytes(&src_dir)?;
+
+        // Verify we got data
+        assert!(!bytes.is_empty());
+
+        // Verify contents by unzipping
+        let cursor = std::io::Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(cursor)?;
+        assert_eq!(archive.len(), 1);
+
+        let mut zipped_file = archive.by_name("test.txt")?;
+        let mut contents = String::new();
+        zipped_file.read_to_string(&mut contents)?;
+        assert_eq!(contents, "Hello, World!");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_zip_directory_to_bytes_multiple_files() -> zip::result::ZipResult<()> {
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("source");
+        std::fs::create_dir(&src_dir).unwrap();
+
+        // Create multiple files
+        std::fs::write(src_dir.join("file1.txt"), b"Content 1").unwrap();
+        std::fs::write(src_dir.join("file2.txt"), b"Content 2").unwrap();
+        std::fs::write(src_dir.join("file3.txt"), b"Content 3").unwrap();
+
+        let bytes = zip_directory_to_bytes(&src_dir)?;
+
+        // Verify we got data
+        assert!(!bytes.is_empty());
+
+        // Verify contents
+        let cursor = std::io::Cursor::new(bytes);
+        let archive = zip::ZipArchive::new(cursor)?;
+        assert_eq!(archive.len(), 3);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_zip_directory_to_bytes_nested() -> zip::result::ZipResult<()> {
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("source");
+        std::fs::create_dir(&src_dir).unwrap();
+
+        // Create nested directory structure
+        let nested = src_dir.join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        std::fs::write(nested.join("file.txt"), b"Nested content").unwrap();
+        std::fs::write(src_dir.join("root.txt"), b"Root content").unwrap();
+
+        let bytes = zip_directory_to_bytes(&src_dir)?;
+
+        // Verify we got data
+        assert!(!bytes.is_empty());
+
+        let cursor = std::io::Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(cursor)?;
+
+        // Should have: nested/ (directory), nested/file.txt, root.txt
+        assert!(archive.len() >= 2);
+
+        // Verify nested file exists
+        let mut nested_file = archive.by_name("nested/file.txt")?;
+        let mut contents = String::new();
+        nested_file.read_to_string(&mut contents)?;
+        assert_eq!(contents, "Nested content");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_zip_directory_to_bytes_empty() -> zip::result::ZipResult<()> {
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("source");
+        std::fs::create_dir(&src_dir).unwrap();
+
+        let bytes = zip_directory_to_bytes(&src_dir)?;
+
+        // Should create a valid but empty zip
+        assert!(!bytes.is_empty());
+        let cursor = std::io::Cursor::new(bytes);
+        let archive = zip::ZipArchive::new(cursor)?;
+        assert_eq!(archive.len(), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_zip_directory_to_bytes_nonexistent_source() {
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("nonexistent");
+
+        // When source doesn't exist, walkdir creates an empty iterator
+        // The zip will be created but will be empty (0 entries)
+        let result = zip_directory_to_bytes(&src_dir);
+
+        // The function succeeds but creates an empty zip
+        assert!(result.is_ok());
+        let bytes = result.unwrap();
+        assert!(!bytes.is_empty());
+
+        // Verify it's empty
+        let cursor = std::io::Cursor::new(bytes);
+        let archive = zip::ZipArchive::new(cursor).unwrap();
+        assert_eq!(archive.len(), 0);
+    }
+
+    // ===== write_directory_to_zip tests ===== 
+
+    #[test]
+    fn test_write_directory_to_zip_single_file() -> zip::result::ZipResult<()> {
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("source");
+        std::fs::create_dir(&src_dir).unwrap();
+
+        // Create a single file
+        let file_path = src_dir.join("test.txt");
+        std::fs::write(&file_path, b"Hello, World!").unwrap();
+
+        // Create a buffer and zip writer
+        let buffer = Vec::new();
+        let zip = ZipWriter::new(std::io::Cursor::new(buffer));
+
+        // Call the helper function
+        let cursor = write_directory_to_zip(&src_dir, zip)?;
+        let bytes = cursor.into_inner();
+
+        // Verify we got data
+        assert!(!bytes.is_empty());
+
+        // Verify contents by unzipping
+        let cursor = std::io::Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(cursor)?;
+        assert_eq!(archive.len(), 1);
+
+        let mut zipped_file = archive.by_name("test.txt")?;
+        let mut contents = String::new();
+        zipped_file.read_to_string(&mut contents)?;
+        assert_eq!(contents, "Hello, World!");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_directory_to_zip_multiple_files() -> zip::result::ZipResult<()> {
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("source");
+        std::fs::create_dir(&src_dir).unwrap();
+
+        // Create multiple files
+        std::fs::write(src_dir.join("file1.txt"), b"Content 1").unwrap();
+        std::fs::write(src_dir.join("file2.txt"), b"Content 2").unwrap();
+
+        let buffer = Vec::new();
+        let zip = ZipWriter::new(std::io::Cursor::new(buffer));
+
+        let cursor = write_directory_to_zip(&src_dir, zip)?;
+        let bytes = cursor.into_inner();
+
+        assert!(!bytes.is_empty());
+
+        let cursor = std::io::Cursor::new(bytes);
+        let archive = zip::ZipArchive::new(cursor)?;
+        assert_eq!(archive.len(), 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_directory_to_zip_nested() -> zip::result::ZipResult<()> {
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("source");
+        std::fs::create_dir(&src_dir).unwrap();
+
+        // Create nested directory structure
+        let nested = src_dir.join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        std::fs::write(nested.join("file.txt"), b"Nested content").unwrap();
+        std::fs::write(src_dir.join("root.txt"), b"Root content").unwrap();
+
+        let buffer = Vec::new();
+        let zip = ZipWriter::new(std::io::Cursor::new(buffer));
+
+        let cursor = write_directory_to_zip(&src_dir, zip)?;
+        let bytes = cursor.into_inner();
+
+        assert!(!bytes.is_empty());
+
+        let cursor = std::io::Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(cursor)?;
+
+        // Should have: nested/ (directory), nested/file.txt, root.txt
+        assert!(archive.len() >= 2);
+
+        // Verify nested file exists
+        let mut nested_file = archive.by_name("nested/file.txt")?;
+        let mut contents = String::new();
+        nested_file.read_to_string(&mut contents)?;
+        assert_eq!(contents, "Nested content");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_directory_to_zip_empty() -> zip::result::ZipResult<()> {
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("source");
+        std::fs::create_dir(&src_dir).unwrap();
+
+        let buffer = Vec::new();
+        let zip = ZipWriter::new(std::io::Cursor::new(buffer));
+
+        let cursor = write_directory_to_zip(&src_dir, zip)?;
+        let bytes = cursor.into_inner();
+
+        assert!(!bytes.is_empty());
+
+        let cursor = std::io::Cursor::new(bytes);
+        let archive = zip::ZipArchive::new(cursor)?;
+        assert_eq!(archive.len(), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_directory_to_zip_nonexistent_source() {
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("nonexistent");
+
+        let buffer = Vec::new();
+        let zip = ZipWriter::new(std::io::Cursor::new(buffer));
+
+        // When source doesn't exist, walkdir creates an empty iterator
+        // The function should succeed and return an empty zip
+        let result = write_directory_to_zip(&src_dir, zip);
+
+        assert!(result.is_ok());
+        let cursor = result.unwrap();
+        let bytes = cursor.into_inner();
+        assert!(!bytes.is_empty());
+
+        // Verify it's empty
+        let cursor = std::io::Cursor::new(bytes);
+        let archive = zip::ZipArchive::new(cursor).unwrap();
+        assert_eq!(archive.len(), 0);
+    }
+
+    #[test]
+    fn test_write_directory_to_zip_to_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("source");
+        std::fs::create_dir(&src_dir).unwrap();
+
+        // Create a test file
+        std::fs::write(src_dir.join("test.txt"), b"File content").unwrap();
+
+        // Create destination file
+        let dst_file = temp_dir.path().join("output.zip");
+
+        // Create file writer
+        let file = File::create(&dst_file).unwrap();
+        let zip = ZipWriter::new(file);
+
+        // Call the helper function
+        let _file = write_directory_to_zip(&src_dir, zip).unwrap();
+
+        // Verify the file was created and contains valid zip
+        assert!(dst_file.exists());
+
+        let file = File::open(&dst_file).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+        assert_eq!(archive.len(), 1);
+
+        let mut zipped_file = archive.by_name("test.txt").unwrap();
+        let mut contents = String::new();
+        zipped_file.read_to_string(&mut contents).unwrap();
+        assert_eq!(contents, "File content");
     }
 }
