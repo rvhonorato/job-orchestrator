@@ -52,6 +52,18 @@ pub enum DownloadError {
 }
 
 #[derive(Debug, thiserror::Error)]
+pub enum DownloadPartialError {
+    #[error("Request failed: {0}")]
+    RequestFailed(#[from] reqwest::Error),
+    #[error("Failed to read response: {0}")]
+    ResponseReadFailed(reqwest::Error),
+    #[error("Not found")]
+    NotFound,
+    #[error("Invalid service")]
+    InvalidService,
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum TerminateError {
     #[error("generic")]
     GenericError,
@@ -100,7 +112,33 @@ where
 pub trait Endpoint {
     async fn upload(&self, j: &Job, url: &str) -> Result<u32, UploadError>;
     async fn download(&self, j: &Job, url: &str) -> Result<Status, DownloadError>;
+    async fn download_partial(&self, j: &Job, url: &str) -> Result<Vec<u8>, DownloadPartialError>;
     async fn terminate(&self, job_id: &Job, url: &str) -> Result<(), TerminateError>;
+}
+
+/// Retrieve partial data (current state) from a job on the client
+pub async fn retrieve_partial<T>(job: &Job, config: &Config, target: T) -> Result<Vec<u8>, DownloadPartialError>
+where
+    T: Endpoint,
+{
+    if job.id == 0 || job.dest_id == 0 {
+        Err(DownloadPartialError::NotFound)
+    } else {
+        match config.get_download_url(&job.service) {
+            Some(url) => {
+                // Replace the last path segment (e.g., "retrieve" or "download") with "retrieve_partial"
+                // This handles URLs like "http://client/retrieve" or "http://client/download"
+                let partial_url = if let Some(pos) = url.rfind('/') {
+                    format!("{}/retrieve_partial", &url[..pos])
+                } else {
+                    // If no slash, just append
+                    format!("{}/retrieve_partial", url)
+                };
+                Ok(target.download_partial(job, &partial_url).await?)
+            }
+            None => Err(DownloadPartialError::InvalidService),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -122,6 +160,9 @@ mod tests {
         async fn download(&self, _j: &Job, _url: &str) -> Result<Status, DownloadError> {
             Ok(Status::Completed)
         }
+        async fn download_partial(&self, _j: &Job, _url: &str) -> Result<Vec<u8>, DownloadPartialError> {
+            Ok(b"partial data".to_vec())
+        }
         async fn terminate(&self, _j: &Job, _url: &str) -> Result<(), TerminateError> {
             Ok(())
         }
@@ -133,6 +174,9 @@ mod tests {
         }
         async fn download(&self, _j: &Job, _url: &str) -> Result<Status, DownloadError> {
             Err(DownloadError::NotFound)
+        }
+        async fn download_partial(&self, _j: &Job, _url: &str) -> Result<Vec<u8>, DownloadPartialError> {
+            Err(DownloadPartialError::NotFound)
         }
         async fn terminate(&self, _j: &Job, _url: &str) -> Result<(), TerminateError> {
             Err(TerminateError::GenericError)
@@ -228,6 +272,56 @@ mod tests {
         let config = make_config();
         let job = make_job(tempdir.path().to_str().unwrap(), "test", 1);
         let result = retrieve(&job, &config, ErrMockEndpoint).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_partial_valid_job() {
+        let tempdir = TempDir::new().unwrap();
+        let config = make_config();
+        let mut job = make_job(tempdir.path().to_str().unwrap(), "test", 1);
+        job.dest_id = 42; // Set dest_id so it doesn't fail with NotFound
+        let result = retrieve_partial(&job, &config, OkMockEndpoint).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), b"partial data");
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_partial_job_id_zero() {
+        let tempdir = TempDir::new().unwrap();
+        let config = make_config();
+        let job = make_job(tempdir.path().to_str().unwrap(), "test", 0);
+        let result = retrieve_partial(&job, &config, OkMockEndpoint).await;
+        assert!(matches!(result.unwrap_err(), DownloadPartialError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_partial_job_dest_id_zero() {
+        let tempdir = TempDir::new().unwrap();
+        let config = make_config();
+        let mut job = make_job(tempdir.path().to_str().unwrap(), "test", 1);
+        job.dest_id = 0;
+        let result = retrieve_partial(&job, &config, OkMockEndpoint).await;
+        assert!(matches!(result.unwrap_err(), DownloadPartialError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_partial_invalid_service() {
+        let tempdir = TempDir::new().unwrap();
+        let config = make_config();
+        let mut job = make_job(tempdir.path().to_str().unwrap(), "nonexistent", 1);
+        job.dest_id = 42; // Set dest_id so it doesn't fail with NotFound first
+        let result = retrieve_partial(&job, &config, OkMockEndpoint).await;
+        assert!(matches!(result.unwrap_err(), DownloadPartialError::InvalidService));
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_partial_propagates_error() {
+        let tempdir = TempDir::new().unwrap();
+        let config = make_config();
+        let mut job = make_job(tempdir.path().to_str().unwrap(), "test", 1);
+        job.dest_id = 42; // Set dest_id so it doesn't fail with NotFound
+        let result = retrieve_partial(&job, &config, ErrMockEndpoint).await;
         assert!(result.is_err());
     }
 

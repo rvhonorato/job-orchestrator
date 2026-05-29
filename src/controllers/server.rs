@@ -2,8 +2,10 @@ use crate::models::job_dao::Job;
 use crate::models::status_body::StatusBody;
 use crate::models::status_dto::Status;
 use crate::routes::router::AppState;
+use crate::services::endpoint::{retrieve_partial, DownloadPartialError};
 use crate::services::server;
 use crate::utils::io::{sanitize_filename, save_file};
+use crate::services::client::Client;
 use axum::response::{IntoResponse, Response};
 use axum::{
     extract::{Json, Multipart, Path, State},
@@ -104,13 +106,28 @@ pub async fn download_partial(State(state): State<AppState>, Path(id): Path<u32>
         return (status, Json(body)).into_response();
     }
 
-    // Always return the zip, regardless of status
-    match job.download_partial() {
+    body.id = job.id;
+
+    // Call the client's retrieve_partial endpoint to get the current state
+    match retrieve_partial(&job, &state.config, Client).await {
         Ok(data) => ([(header::CONTENT_TYPE, "application/zip")], data).into_response(),
         Err(e) => {
-            tracing::error!("Error reading job directory: {:?}", e);
-            body.message = "Error reading job directory".to_string();
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
+            tracing::error!("Error retrieving partial data from client: {:?}", e);
+            let status = match e {
+                DownloadPartialError::NotFound => {
+                    body.message = "Job payload not found on client".to_string();
+                    StatusCode::NOT_FOUND
+                }
+                DownloadPartialError::InvalidService => {
+                    body.message = "Invalid service configuration".to_string();
+                    StatusCode::BAD_REQUEST
+                }
+                _ => {
+                    body.message = "Error retrieving partial data from client".to_string();
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
+            };
+            (status, Json(body)).into_response()
         }
     }
 }
@@ -729,24 +746,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_download_partial_queued_job() {
+    async fn test_download_partial_success() {
         let tempdir = TempDir::new().unwrap();
         let pool = setup_test_db().await;
         let config = make_config(tempdir.path().to_str().unwrap());
 
+        // Create and add a job to the database
         let mut job = Job::new(tempdir.path().to_str().unwrap());
         job.set_user_id(1);
         job.set_service("test".to_string());
         job.add_to_db(&pool).await.unwrap();
-        job.update_status(Status::Queued, &pool).await.unwrap();
-
-        // Create the job directory with some files
-        fs::create_dir_all(&job.loc).unwrap();
-        fs::write(job.loc.join("test.txt"), b"test data").unwrap();
-
+        job.update_dest_id(42, &pool).await.unwrap();
+        job.update_status(Status::Running, &pool).await.unwrap();
         let job_id = job.id;
 
-        let app = create_routes(pool, config);
+        // Mock the retrieve_partial endpoint
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/retrieve_partial/42")
+            .with_status(200)
+            .with_header("content-type", "application/zip")
+            .with_body(b"fake partial zip content")
+            .create_async()
+            .await;
+
+        // Update config to use mock server URL
+        let mut config_with_mock = config;
+        if let Some(service) = config_with_mock.services.get_mut("test") {
+            service.download_url = format!("{}/retrieve", server.url());
+        }
+
+        let app = create_routes(pool, config_with_mock);
 
         let request = Request::builder()
             .method("GET")
@@ -764,40 +794,42 @@ mod tests {
             .unwrap_or("");
         assert_eq!(content_type, "application/zip");
 
-        // Verify the zip contains our test file
         let bytes = body_bytes(response).await;
-        assert!(!bytes.is_empty());
+        assert_eq!(&bytes[..], b"fake partial zip content");
 
-        // Unzip and verify contents
-        let cursor = std::io::Cursor::new(bytes);
-        let mut archive = zip::ZipArchive::new(cursor).unwrap();
-        assert!(archive.len() > 0);
-
-        let mut file = archive.by_name("test.txt").unwrap();
-        let mut contents = String::new();
-        file.read_to_string(&mut contents).unwrap();
-        assert_eq!(contents, "test data");
+        mock.assert_async().await;
     }
 
     #[tokio::test]
-    async fn test_download_partial_running_job() {
+    async fn test_download_partial_client_not_found() {
         let tempdir = TempDir::new().unwrap();
         let pool = setup_test_db().await;
         let config = make_config(tempdir.path().to_str().unwrap());
 
+        // Create and add a job to the database
         let mut job = Job::new(tempdir.path().to_str().unwrap());
         job.set_user_id(1);
         job.set_service("test".to_string());
         job.add_to_db(&pool).await.unwrap();
+        job.update_dest_id(42, &pool).await.unwrap();
         job.update_status(Status::Running, &pool).await.unwrap();
-
-        // Create the job directory with some files
-        fs::create_dir_all(&job.loc).unwrap();
-        fs::write(job.loc.join("output.txt"), b"partial output").unwrap();
-
         let job_id = job.id;
 
-        let app = create_routes(pool, config);
+        // Mock the retrieve_partial endpoint to return 404
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/retrieve_partial/42")
+            .with_status(404)
+            .create_async()
+            .await;
+
+        // Update config to use mock server URL
+        let mut config_with_mock = config;
+        if let Some(service) = config_with_mock.services.get_mut("test") {
+            service.download_url = format!("{}/retrieve", server.url());
+        }
+
+        let app = create_routes(pool, config_with_mock);
 
         let request = Request::builder()
             .method("GET")
@@ -806,18 +838,9 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        assert_eq!(content_type, "application/zip");
-
-        // Verify the zip contains our test file
-        let bytes = body_bytes(response).await;
-        assert!(!bytes.is_empty());
+        mock.assert_async().await;
     }
 
     #[tokio::test]
