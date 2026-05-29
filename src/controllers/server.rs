@@ -844,6 +844,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_download_partial_invalid_service() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let mut config = make_config(tempdir.path().to_str().unwrap());
+
+        // Remove the test service to trigger InvalidService error
+        config.services.clear();
+
+        // Create and add a job to the database
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("nonexistent".to_string());
+        job.add_to_db(&pool).await.unwrap();
+        job.update_dest_id(42, &pool).await.unwrap();
+        job.update_status(Status::Running, &pool).await.unwrap();
+        let job_id = job.id;
+
+        let app = create_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/download_partial/{job_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            body.message.to_lowercase().contains("invalid service"),
+            "Expected 'invalid service' message, got: {}",
+            body.message
+        );
+    }
+
+    #[tokio::test]
     async fn test_terminate_not_found() {
         let tempdir = TempDir::new().unwrap();
         let pool = setup_test_db().await;

@@ -561,6 +561,7 @@ mod test {
         job.dest_id = 123;
 
         // Mock server response with zip content
+        // The code uses format!("{url}/{0}", j.dest_id) which appends dest_id to url
         let mock = server
             .mock("GET", "/retrieve_partial/123")
             .with_status(200)
@@ -589,6 +590,7 @@ mod test {
         job.dest_id = 456;
 
         // Mock server response with 404
+        // The code uses format!("{url}/{0}", j.dest_id) which appends dest_id to url
         let mock = server
             .mock("GET", "/retrieve_partial/456")
             .with_status(404)
@@ -881,6 +883,37 @@ mod test {
         match result.unwrap_err() {
             TerminateError::GenericError => {}
             _ => panic!("Expected GenericError"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_client_download_partial_client_error() {
+        let mut server = Server::new_async().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mut job = Job::new(temp_dir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+        job.dest_id = 999;
+
+        // Mock server response with 500 error
+        // The code uses format!("{url}/{0}", j.dest_id) which appends dest_id to url
+        let mock = server
+            .mock("GET", "/retrieve_partial/999")
+            .with_status(500)
+            .with_body(b"Internal Server Error")
+            .create_async()
+            .await;
+
+        let client = Client;
+        let url = format!("{}/retrieve_partial", server.url());
+        let result = client.download_partial(&job, &url).await;
+
+        mock.assert_async().await;
+        assert!(result.is_err(), "Expected error for client error status");
+        match result.unwrap_err() {
+            DownloadPartialError::RequestFailed(_) => {}
+            _ => panic!("Expected RequestFailed error"),
         }
     }
 }

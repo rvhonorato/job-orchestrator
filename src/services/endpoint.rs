@@ -368,4 +368,19 @@ mod tests {
         let result = kill(&job, &config, OkMockEndpoint).await;
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn test_retrieve_partial_url_without_trailing_slash() {
+        let tempdir = TempDir::new().unwrap();
+        let mut config = make_config();
+        // Set a download URL without trailing slash
+        if let Some(service) = config.services.get_mut("test") {
+            service.download_url = "http://example.com/download".to_string();
+        }
+        let mut job = make_job(tempdir.path().to_str().unwrap(), "test", 1);
+        job.dest_id = 42;
+        let result = retrieve_partial(&job, &config, OkMockEndpoint).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), b"partial data");
+    }
 }
