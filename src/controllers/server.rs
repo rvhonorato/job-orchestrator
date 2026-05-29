@@ -68,6 +68,54 @@ pub async fn download(State(state): State<AppState>, Path(id): Path<u32>) -> Res
 }
 
 #[utoipa::path(
+    get,
+    path = "/download_partial/{id}",
+    params(
+        ("id" = u32, Path, description = "Job identifier")
+    ),
+    responses(
+        (status = 200, description = "Returns zip file of current job state, regardless of completion", content_type = "application/zip", body = Vec<u8>),
+        (status = 404, description = "Not found", body = StatusBody),
+        (status = 500, description = "Internal server error", body = StatusBody),
+    ),
+    tag = "files"
+)]
+pub async fn download_partial(State(state): State<AppState>, Path(id): Path<u32>) -> Response {
+    let mut job = Job::new(&state.config.data_path);
+    let mut body = StatusBody::new();
+
+    let result = job.retrieve_id(id, &state.pool).await;
+
+    if let Err(e) = result {
+        // Error when retrieving this id, check what kind of error it was
+        let status = match e {
+            // It is not found on the database
+            sqlx::Error::RowNotFound => {
+                body.message = format!("Job {id} not found in the database");
+                StatusCode::NOT_FOUND
+            }
+            // Something else
+            _ => {
+                body.message = "Internal server error".to_string();
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        };
+        // Return the error
+        return (status, Json(body)).into_response();
+    }
+
+    // Always return the zip, regardless of status
+    match job.download_partial() {
+        Ok(data) => ([(header::CONTENT_TYPE, "application/zip")], data).into_response(),
+        Err(e) => {
+            tracing::error!("Error reading job directory: {:?}", e);
+            body.message = "Error reading job directory".to_string();
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
+        }
+    }
+}
+
+#[utoipa::path(
     post,
     path = "/upload",
     request_body(
@@ -260,6 +308,7 @@ mod tests {
     use sqlx::SqlitePool;
     use std::collections::HashMap;
     use std::fs;
+    use std::io::Read;
     use tempfile::TempDir;
     use tower::ServiceExt;
 
@@ -652,6 +701,123 @@ mod tests {
             "Expected error about output file, got: {}",
             body.message
         );
+    }
+
+    #[tokio::test]
+    async fn test_download_partial_not_found() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/download_partial/9999")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let bytes = body_bytes(response).await;
+        let body: StatusBody = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            body.message.to_lowercase().contains("not found") && body.message.contains("9999"),
+            "Expected 'not found' message mentioning job id, got: {}",
+            body.message
+        );
+    }
+
+    #[tokio::test]
+    async fn test_download_partial_queued_job() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Queued, &pool).await.unwrap();
+
+        // Create the job directory with some files
+        fs::create_dir_all(&job.loc).unwrap();
+        fs::write(job.loc.join("test.txt"), b"test data").unwrap();
+
+        let job_id = job.id;
+
+        let app = create_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/download_partial/{job_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert_eq!(content_type, "application/zip");
+
+        // Verify the zip contains our test file
+        let bytes = body_bytes(response).await;
+        assert!(!bytes.is_empty());
+
+        // Unzip and verify contents
+        let cursor = std::io::Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(cursor).unwrap();
+        assert!(archive.len() > 0);
+
+        let mut file = archive.by_name("test.txt").unwrap();
+        let mut contents = String::new();
+        file.read_to_string(&mut contents).unwrap();
+        assert_eq!(contents, "test data");
+    }
+
+    #[tokio::test]
+    async fn test_download_partial_running_job() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Running, &pool).await.unwrap();
+
+        // Create the job directory with some files
+        fs::create_dir_all(&job.loc).unwrap();
+        fs::write(job.loc.join("output.txt"), b"partial output").unwrap();
+
+        let job_id = job.id;
+
+        let app = create_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/download_partial/{job_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert_eq!(content_type, "application/zip");
+
+        // Verify the zip contains our test file
+        let bytes = body_bytes(response).await;
+        assert!(!bytes.is_empty());
     }
 
     #[tokio::test]
