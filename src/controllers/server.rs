@@ -2,10 +2,10 @@ use crate::models::job_dao::Job;
 use crate::models::status_body::StatusBody;
 use crate::models::status_dto::Status;
 use crate::routes::router::AppState;
-use crate::services::endpoint::{retrieve_partial, DownloadPartialError};
+use crate::services::client::Client;
+use crate::services::endpoint;
 use crate::services::server;
 use crate::utils::io::{sanitize_filename, save_file};
-use crate::services::client::Client;
 use axum::response::{IntoResponse, Response};
 use axum::{
     extract::{Json, Multipart, Path, State},
@@ -109,16 +109,16 @@ pub async fn download_partial(State(state): State<AppState>, Path(id): Path<u32>
     body.id = job.id;
 
     // Call the client's retrieve_partial endpoint to get the current state
-    match retrieve_partial(&job, &state.config, Client).await {
+    match endpoint::retrieve_partial(&job, &state.config, Client).await {
         Ok(data) => ([(header::CONTENT_TYPE, "application/zip")], data).into_response(),
         Err(e) => {
             tracing::error!("Error retrieving partial data from client: {:?}", e);
             let status = match e {
-                DownloadPartialError::NotFound => {
+                endpoint::DownloadPartialError::NotFound => {
                     body.message = "Job payload not found on client".to_string();
                     StatusCode::NOT_FOUND
                 }
-                DownloadPartialError::InvalidService => {
+                endpoint::DownloadPartialError::InvalidService => {
                     body.message = "Invalid service configuration".to_string();
                     StatusCode::BAD_REQUEST
                 }
