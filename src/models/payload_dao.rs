@@ -84,8 +84,7 @@ impl Payload {
     /// Unlike zip_directory, this does not create or read from output.zip.
     pub fn zip_partial(self) -> Result<Vec<u8>, std::io::Error> {
         // Zip the directory to bytes directly without using output.zip
-        utils::io::zip_directory_to_bytes(&self.loc)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        utils::io::zip_directory_to_bytes(&self.loc).map_err(std::io::Error::other)
     }
 
     pub fn execute(&mut self) -> Result<(), ClientError> {
@@ -306,10 +305,10 @@ mod test {
         p.pid = child.id();
         // Give the process a moment to start
         std::thread::sleep(std::time::Duration::from_millis(200));
-        
+
         // kill() should return Ok if the kill command succeeds
         assert!(p.kill().is_ok());
-        
+
         // Wait for the process to avoid zombie
         let _ = child.wait();
     }
