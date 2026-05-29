@@ -41,6 +41,9 @@ impl Queue<'_> {
     }
 
     pub async fn load(&mut self, pool: &SqlitePool) -> Result<(), sqlx::Error> {
+        // Clear the job list before adding new ones to make sure there are no stales
+        self.jobs = Vec::new();
+
         // ===========================================================================================
         // Step 1a: get how many jobs have been submitted to the service per user
         let submitted_rows = sqlx::query(
