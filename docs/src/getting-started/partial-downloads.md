@@ -26,26 +26,6 @@ unzip partial_results.zip
 cat intermediate_output.txt
 ```
 
-### Use Case: Long-Running Job Debugging
-
-```bash
-# Submit a job
-curl -X POST http://localhost:5000/upload \
-  -F "file=@run.sh" \
-  -F "user_id=1" \
-  -F "service=example"
-
-# Poll for partial results every 30 seconds
-while true; do
-  curl -o partial.zip http://localhost:5000/download_partial/1
-  echo "Checking partial output..."
-  if [ -f partial_output.txt ]; then
-    cat partial_output.txt
-  fi
-  sleep 30
-done
-```
-
 ## Client-Side: /retrieve_partial/{id}
 
 This endpoint is called internally by the server's `/download_partial` endpoint.
