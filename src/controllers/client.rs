@@ -532,6 +532,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_retrieve_partial_zip_error() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        let mut payload = Payload::new();
+        payload.add_to_db(&pool).await.unwrap();
+        let payload_id = payload.id;
+
+        // Set an invalid/non-existent directory
+        let invalid_dir = tempdir.path().join("nonexistent");
+        payload.set_loc(invalid_dir);
+        payload.update_loc(&pool).await.unwrap();
+
+        let app = create_client_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/retrieve_partial/{payload_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let bytes = body_bytes(response).await;
+        let payload_resp: Payload = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(payload_resp.id, 0);
+    }
+
+    #[tokio::test]
     async fn test_load() {
         let tempdir = TempDir::new().unwrap();
         let pool = setup_test_db().await;
