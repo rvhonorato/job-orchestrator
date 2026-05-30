@@ -124,10 +124,12 @@ pub async fn retrieve(State(state): State<AppState>, Path(id): Path<u32>) -> Res
     tag = "files"
 )]
 pub async fn retrieve_partial(State(state): State<AppState>, Path(id): Path<u32>) -> Response {
+    tracing::info!("Retrieving partial data for {}", id);
     let payload = match Payload::retrieve_id(id, &state.pool).await {
         Ok(p) => p,
         // TODO: Empty payload responses are indicators of an unhealthy client — handle in a future PR.
         Err(e) => {
+            tracing::error!("could not `retrieve_id`: {}", e);
             let status = match e {
                 sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
