@@ -98,7 +98,7 @@ pub(crate) fn write_directory_to_zip<W: std::io::Write + std::io::Seek>(
 
     for entry in it.filter_map(|e| e.ok()) {
         let path = entry.path();
-        
+
         // Check for path traversal: canonicalize the path and ensure it's within src_dir
         let canonical_path = std::fs::canonicalize(path).map_err(|_| {
             zip::result::ZipError::Io(io::Error::new(
@@ -106,14 +106,23 @@ pub(crate) fn write_directory_to_zip<W: std::io::Write + std::io::Seek>(
                 "Failed to canonicalize path",
             ))
         })?;
-        
-        if !canonical_path.starts_with(&canonical_source) {
+
+        let relative = canonical_path
+            .strip_prefix(&canonical_source)
+            .map_err(|_| {
+                zip::result::ZipError::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Path prefix mismatch",
+                ))
+            })?;
+
+        if relative.to_string_lossy().contains("..") {
             return Err(zip::result::ZipError::Io(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "Path traversal detected",
             )));
         }
-        
+
         if let Ok(name) = path.strip_prefix(src_dir) {
             // Skip the root directory itself
             if name.as_os_str().is_empty() {
@@ -344,7 +353,10 @@ mod tests {
         let script_path = temp_dir.path().join("run.sh");
         fs::write(&script_path, b"#!/bin/bash\necho 'Hello, World!'\nexit 0\n").unwrap();
         let result = validate_script(&script_path);
-        assert!(matches!(result, Err(ClientError::MissingRequirement { .. })));
+        assert!(matches!(
+            result,
+            Err(ClientError::MissingRequirement { .. })
+        ));
     }
 
     #[test]
@@ -726,7 +738,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ===== zip_directory_to_bytes tests ===== 
+    // ===== zip_directory_to_bytes tests =====
 
     #[test]
     fn test_zip_directory_to_bytes_single_file() -> zip::result::ZipResult<()> {
@@ -842,7 +854,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ===== write_directory_to_zip tests ===== 
+    // ===== write_directory_to_zip tests =====
 
     #[test]
     fn test_write_directory_to_zip_single_file() -> zip::result::ZipResult<()> {

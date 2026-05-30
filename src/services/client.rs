@@ -192,7 +192,7 @@ impl Endpoint for Client {
         let client = reqwest::Client::new();
         // Append the job id to the url
         let response = client
-            .get(format!("{url}/{0}", j.dest_id))
+            .get(format!("{}/{}", url, j.dest_id))
             .send()
             .await
             .map_err(DownloadPartialError::RequestFailed)?;
