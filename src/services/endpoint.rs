@@ -130,13 +130,15 @@ where
     } else {
         match config.get_download_url(&job.service) {
             Some(url) => {
-                // TODO: Remove this hack
                 // Replace the last path segment (e.g., "retrieve" or "download") with "retrieve_partial"
                 // This handles URLs like "http://client/retrieve" or "http://client/download"
                 let partial_url = if let Some(pos) = url.rfind('/') {
-                    format!("{}/retrieve_partial", &url[..pos])
+                    if pos + 1 < url.len() {
+                        format!("{}/retrieve_partial", &url[..pos + 1])
+                    } else {
+                        format!("{}retrieve_partial", url)
+                    }
                 } else {
-                    // If no slash, just append
                     format!("{}/retrieve_partial", url)
                 };
                 Ok(target.download_partial(job, &partial_url).await?)
