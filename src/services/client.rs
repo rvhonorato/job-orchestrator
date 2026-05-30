@@ -216,9 +216,12 @@ impl Endpoint for Client {
             Err(DownloadPartialError::NotFound)
         } else if status.is_success() {
             // Unexpected success status without zip content
-            Err(DownloadPartialError::ResponseReadFailed(
-                response.error_for_status().unwrap_err(),
-            ))
+            tracing::error!(
+                "Unexpected HTTP {} with content-type {} (expected application/zip)",
+                status.as_u16(),
+                content_type
+            );
+            Err(DownloadPartialError::UnexpectedStatus(status.as_u16()))
         } else {
             // Client returned an error
             tracing::error!("Client returned error status: {status}");
@@ -606,6 +609,40 @@ mod test {
         match result.unwrap_err() {
             DownloadPartialError::NotFound => {}
             _ => panic!("Expected NotFound error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_client_download_partial_unexpected_content_type() {
+        let mut server = Server::new_async().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mut job = Job::new(temp_dir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+        job.dest_id = 789;
+
+        // Mock server response with 200 but wrong content type (no zip)
+        // The code uses format!("{url}/{0}", j.dest_id) which appends dest_id to url
+        let mock = server
+            .mock("GET", "/retrieve_partial/789")
+            .with_status(200)
+            .with_header("content-type", "text/plain")
+            .with_body(b"not a zip file")
+            .create_async()
+            .await;
+
+        let client = Client;
+        let url = format!("{}/retrieve_partial", server.url());
+        let result = client.download_partial(&job, &url).await;
+
+        mock.assert_async().await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DownloadPartialError::UnexpectedStatus(status) => {
+                assert_eq!(status, 200);
+            }
+            _ => panic!("Expected UnexpectedStatus error for non-zip content"),
         }
     }
 

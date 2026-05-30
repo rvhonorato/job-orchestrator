@@ -61,6 +61,8 @@ pub enum DownloadPartialError {
     NotFound,
     #[error("Invalid service")]
     InvalidService,
+    #[error("Unexpected HTTP status: {0}")]
+    UnexpectedStatus(u16),
 }
 
 #[derive(Debug, thiserror::Error)]
