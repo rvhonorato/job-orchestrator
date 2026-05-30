@@ -134,7 +134,7 @@ where
                 // This handles URLs like "http://client/retrieve" or "http://client/download"
                 let partial_url = if let Some(pos) = url.rfind('/') {
                     if pos + 1 < url.len() {
-                        format!("{}/retrieve_partial", &url[..pos + 1])
+                        format!("{}retrieve_partial", &url[..pos + 1])
                     } else {
                         format!("{}retrieve_partial", url)
                     }
