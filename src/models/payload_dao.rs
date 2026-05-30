@@ -79,6 +79,14 @@ impl Payload {
         std::fs::read(&result)
     }
 
+    /// Zip the payload directory to bytes, regardless of its current state.
+    /// This is used for partial downloads to debug stuck or incomplete runs.
+    /// Unlike zip_directory, this does not create or read from output.zip.
+    pub fn zip_partial(self) -> Result<Vec<u8>, std::io::Error> {
+        // Zip the directory to bytes directly without using output.zip
+        utils::io::zip_directory_to_bytes(&self.loc).map_err(std::io::Error::other)
+    }
+
     pub fn execute(&mut self) -> Result<(), ClientError> {
         let run_script = self.loc.join(RUN_FILE);
         utils::io::validate_script(&run_script)?;
@@ -146,6 +154,7 @@ impl Payload {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::io::Read;
 
     #[tokio::test]
     async fn test_add_input() {
@@ -296,11 +305,73 @@ mod test {
         p.pid = child.id();
         // Give the process a moment to start
         std::thread::sleep(std::time::Duration::from_millis(200));
-        
+
         // kill() should return Ok if the kill command succeeds
         assert!(p.kill().is_ok());
-        
+
         // Wait for the process to avoid zombie
         let _ = child.wait();
+    }
+
+    #[tokio::test]
+    async fn test_zip_partial() {
+        let mut p = Payload::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        p.loc = temp_dir.path().to_path_buf();
+
+        // Create some files in the payload directory
+        fs::create_dir_all(&p.loc).unwrap();
+        fs::write(p.loc.join("test.txt"), b"test data").unwrap();
+        fs::write(p.loc.join("output.txt"), b"output data").unwrap();
+
+        // Call zip_partial
+        let result = p.zip_partial();
+        assert!(result.is_ok());
+
+        let bytes = result.unwrap();
+        assert!(!bytes.is_empty());
+
+        // Verify the zip contains both files
+        let cursor = std::io::Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(cursor).unwrap();
+        assert!(archive.len() >= 2);
+
+        // Verify we can read the first file
+        {
+            let mut test_file = archive.by_name("test.txt").unwrap();
+            let mut contents = String::new();
+            test_file.read_to_string(&mut contents).unwrap();
+            assert_eq!(contents, "test data");
+        }
+
+        // Verify we can read the second file
+        {
+            let mut output_file = archive.by_name("output.txt").unwrap();
+            let mut output_contents = String::new();
+            output_file.read_to_string(&mut output_contents).unwrap();
+            assert_eq!(output_contents, "output data");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_zip_partial_empty_directory() {
+        let mut p = Payload::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        p.loc = temp_dir.path().to_path_buf();
+
+        // Create empty directory
+        fs::create_dir_all(&p.loc).unwrap();
+
+        // Call zip_partial
+        let result = p.zip_partial();
+        assert!(result.is_ok());
+
+        let bytes = result.unwrap();
+        assert!(!bytes.is_empty());
+
+        // Verify the zip is empty
+        let cursor = std::io::Cursor::new(bytes);
+        let archive = zip::ZipArchive::new(cursor).unwrap();
+        assert_eq!(archive.len(), 0);
     }
 }

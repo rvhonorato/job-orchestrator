@@ -2,7 +2,7 @@ use crate::models::status_dto::Status;
 
 use crate::models::job_dao::Job;
 use crate::models::payload_dao::Payload;
-use crate::services::endpoint::{DownloadError, UploadError};
+use crate::services::endpoint::{DownloadError, DownloadPartialError, UploadError};
 use crate::services::endpoint::{Endpoint, TerminateError};
 use futures_util::StreamExt;
 use reqwest::multipart::{Form, Part};
@@ -183,6 +183,49 @@ impl Endpoint for Client {
             // Client returned an error
             tracing::error!("Client returned error status: {status}");
             Err(DownloadError::RequestFailed(
+                response.error_for_status().unwrap_err(),
+            ))
+        }
+    }
+
+    async fn download_partial(&self, j: &Job, url: &str) -> Result<Vec<u8>, DownloadPartialError> {
+        let client = reqwest::Client::new();
+        // Append the job id to the url
+        let response = client
+            .get(format!("{}/{}", url, j.dest_id))
+            .send()
+            .await
+            .map_err(DownloadPartialError::RequestFailed)?;
+
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+
+        if status == StatusCode::OK && content_type.contains("application/zip") {
+            // Return the zip bytes
+            let bytes = response
+                .bytes()
+                .await
+                .map_err(DownloadPartialError::ResponseReadFailed)?;
+            Ok(bytes.to_vec())
+        } else if status == StatusCode::NOT_FOUND {
+            // Payload not found on client
+            Err(DownloadPartialError::NotFound)
+        } else if status.is_success() {
+            // Unexpected success status without zip content
+            tracing::error!(
+                "Unexpected HTTP {} with content-type {} (expected application/zip)",
+                status.as_u16(),
+                content_type
+            );
+            Err(DownloadPartialError::UnexpectedStatus(status.as_u16()))
+        } else {
+            // Client returned an error
+            tracing::error!("Client returned error status: {status}");
+            Err(DownloadPartialError::RequestFailed(
                 response.error_for_status().unwrap_err(),
             ))
         }
@@ -510,6 +553,100 @@ mod test {
     }
 
     #[tokio::test]
+    async fn test_client_download_partial_success() {
+        let mut server = Server::new_async().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create a job
+        let mut job = Job::new(temp_dir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+        job.dest_id = 123;
+
+        // Mock server response with zip content
+        // The code uses format!("{url}/{0}", j.dest_id) which appends dest_id to url
+        let mock = server
+            .mock("GET", "/retrieve_partial/123")
+            .with_status(200)
+            .with_header("content-type", "application/zip")
+            .with_body(b"partial zip content")
+            .create_async()
+            .await;
+
+        let client = Client;
+        let url = format!("{}/retrieve_partial", server.url());
+        let result = client.download_partial(&job, &url).await;
+
+        mock.assert_async().await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), b"partial zip content");
+    }
+
+    #[tokio::test]
+    async fn test_client_download_partial_not_found() {
+        let mut server = Server::new_async().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mut job = Job::new(temp_dir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+        job.dest_id = 456;
+
+        // Mock server response with 404
+        // The code uses format!("{url}/{0}", j.dest_id) which appends dest_id to url
+        let mock = server
+            .mock("GET", "/retrieve_partial/456")
+            .with_status(404)
+            .create_async()
+            .await;
+
+        let client = Client;
+        let url = format!("{}/retrieve_partial", server.url());
+        let result = client.download_partial(&job, &url).await;
+
+        mock.assert_async().await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DownloadPartialError::NotFound => {}
+            _ => panic!("Expected NotFound error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_client_download_partial_unexpected_content_type() {
+        let mut server = Server::new_async().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mut job = Job::new(temp_dir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+        job.dest_id = 789;
+
+        // Mock server response with 200 but wrong content type (no zip)
+        // The code uses format!("{url}/{0}", j.dest_id) which appends dest_id to url
+        let mock = server
+            .mock("GET", "/retrieve_partial/789")
+            .with_status(200)
+            .with_header("content-type", "text/plain")
+            .with_body(b"not a zip file")
+            .create_async()
+            .await;
+
+        let client = Client;
+        let url = format!("{}/retrieve_partial", server.url());
+        let result = client.download_partial(&job, &url).await;
+
+        mock.assert_async().await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DownloadPartialError::UnexpectedStatus(status) => {
+                assert_eq!(status, 200);
+            }
+            _ => panic!("Expected UnexpectedStatus error for non-zip content"),
+        }
+    }
+
+    #[tokio::test]
     async fn test_runner() {
         // Initialize pool
         let tempdir = TempDir::new().unwrap();
@@ -783,6 +920,37 @@ mod test {
         match result.unwrap_err() {
             TerminateError::GenericError => {}
             _ => panic!("Expected GenericError"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_client_download_partial_client_error() {
+        let mut server = Server::new_async().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mut job = Job::new(temp_dir.path().to_str().unwrap());
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+        job.dest_id = 999;
+
+        // Mock server response with 500 error
+        // The code uses format!("{url}/{0}", j.dest_id) which appends dest_id to url
+        let mock = server
+            .mock("GET", "/retrieve_partial/999")
+            .with_status(500)
+            .with_body(b"Internal Server Error")
+            .create_async()
+            .await;
+
+        let client = Client;
+        let url = format!("{}/retrieve_partial", server.url());
+        let result = client.download_partial(&job, &url).await;
+
+        mock.assert_async().await;
+        assert!(result.is_err(), "Expected error for client error status");
+        match result.unwrap_err() {
+            DownloadPartialError::RequestFailed(_) => {}
+            _ => panic!("Expected RequestFailed error"),
         }
     }
 }

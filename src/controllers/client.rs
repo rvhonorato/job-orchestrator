@@ -112,6 +112,43 @@ pub async fn retrieve(State(state): State<AppState>, Path(id): Path<u32>) -> Res
 
 #[utoipa::path(
     get,
+    path = "/retrieve_partial/{id}",
+    params(
+        ("id" = i32, Path, description = "Payload identifier")
+    ),
+    responses(
+       (status = 200, description = "Returns zip file of current payload state, regardless of completion", content_type = "application/zip", body = Vec<u8>),
+       (status = 404, description = "Payload not found", body = Payload),
+       (status = 500, description = "Internal server error", body = Payload),
+   ),
+    tag = "files"
+)]
+pub async fn retrieve_partial(State(state): State<AppState>, Path(id): Path<u32>) -> Response {
+    let payload = match Payload::retrieve_id(id, &state.pool).await {
+        Ok(p) => p,
+        // TODO: Empty payload responses are indicators of an unhealthy client — handle in a future PR.
+        Err(e) => {
+            let status = match e {
+                sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            return (status, Json(Payload::new())).into_response();
+        }
+    };
+
+    // Always return the zip, regardless of status
+    match payload.zip_partial() {
+        Ok(v) => ([(header::CONTENT_TYPE, "application/zip")], v).into_response(),
+        // TODO: Empty payload response is an indicator of an unhealthy client — handle in a future PR.
+        Err(e) => {
+            tracing::error!("Error compressing directory {:?}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(Payload::new())).into_response()
+        }
+    }
+}
+
+#[utoipa::path(
+    get,
     path = "/load",
     responses(
         (status = 200, description = "Get the load of the client", body = f32),
@@ -169,6 +206,7 @@ mod tests {
     use sqlx::SqlitePool;
     use std::collections::HashMap;
     use std::fs;
+    use std::io::Read;
     use tempfile::TempDir;
     use tower::ServiceExt;
 
@@ -379,6 +417,149 @@ mod tests {
 
         let response = app.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_partial_not_found() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_client_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/retrieve_partial/9999")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_partial_non_completed() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        let mut payload = Payload::new();
+        payload.add_to_db(&pool).await.unwrap();
+        payload
+            .update_status(Status::Prepared, &pool)
+            .await
+            .unwrap();
+
+        // Create payload directory with files
+        let payload_dir = tempdir.path().join(payload.id.to_string());
+        fs::create_dir_all(&payload_dir).unwrap();
+        fs::write(&payload_dir.join("test.txt"), b"partial data").unwrap();
+        payload.set_loc(payload_dir);
+        payload.update_loc(&pool).await.unwrap();
+
+        let payload_id = payload.id;
+
+        let app = create_client_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/retrieve_partial/{payload_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert_eq!(content_type, "application/zip");
+
+        // Verify the zip contains our test file
+        let bytes = body_bytes(response).await;
+        assert!(!bytes.is_empty());
+
+        // Unzip and verify contents
+        let cursor = std::io::Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(cursor).unwrap();
+        assert!(archive.len() > 0);
+
+        let mut file = archive.by_name("test.txt").unwrap();
+        let mut contents = String::new();
+        file.read_to_string(&mut contents).unwrap();
+        assert_eq!(contents, "partial data");
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_partial_completed() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        let mut payload = Payload::new();
+        payload.add_to_db(&pool).await.unwrap();
+        let payload_id = payload.id;
+
+        let payload_dir = tempdir.path().join(payload_id.to_string());
+        fs::create_dir_all(&payload_dir).unwrap();
+        fs::write(payload_dir.join("output.txt"), b"result data").unwrap();
+
+        payload.set_loc(payload_dir);
+        payload.update_loc(&pool).await.unwrap();
+        payload
+            .update_status(Status::Completed, &pool)
+            .await
+            .unwrap();
+
+        let app = create_client_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/retrieve_partial/{payload_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert_eq!(content_type, "application/zip");
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_partial_zip_error() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+
+        let mut payload = Payload::new();
+        payload.add_to_db(&pool).await.unwrap();
+        let payload_id = payload.id;
+
+        // Set an invalid/non-existent directory
+        let invalid_dir = tempdir.path().join("nonexistent");
+        payload.set_loc(invalid_dir);
+        payload.update_loc(&pool).await.unwrap();
+
+        let app = create_client_routes(pool, config);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/retrieve_partial/{payload_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let bytes = body_bytes(response).await;
+        let payload_resp: Payload = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(payload_resp.id, 0);
     }
 
     #[tokio::test]
