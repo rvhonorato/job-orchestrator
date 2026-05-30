@@ -30,7 +30,7 @@ Submit a new job for processing.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `file` | file | Yes | One or more files (repeat for multiple) |
-| `user_id` | integer | Yes | User identifier for quota tracking |
+| `user_id` | integer | No | User identifier for quota tracking (default: 0) |
 | `service` | string | Yes | Service name (must be configured on server) |
 
 **Example**
@@ -69,9 +69,12 @@ curl -X POST http://localhost:5000/upload \
 
 ---
 
-### GET /download/{id}
+### GET /download_partial/{id}
 
-Check job status or download results.
+Retrieve current job state regardless of completion status.
+
+Use this endpoint to debug stuck or incomplete jobs by downloading
+the current workspace state as a ZIP file.
 
 **Parameters**
 
@@ -82,35 +85,20 @@ Check job status or download results.
 **Example**
 
 ```bash
-# Check status (returns JSON when not completed)
-curl http://localhost:5000/download/1
-
-# Download results (returns ZIP when completed)
-curl -o results.zip http://localhost:5000/download/1
+# Download partial results for debugging
+curl -o partial_results.zip http://localhost:5000/download_partial/1
 ```
 
 **Response**
 
-When the job is **not yet completed**, returns a JSON body:
-
-```json
-{
-  "id": 1,
-  "status": "Submitted",
-  "message": ""
-}
-```
-
-When the job is **completed**, returns:
-
 - Content-Type: `application/zip`
-- Body: ZIP archive containing all result files
+- Body: ZIP archive containing current job directory state
 
 **Status Codes**
 
 | Code | Description |
-|------|-------------|
-| `200` | JSON status body or ZIP file (check `Content-Type`) |
+|------|----|
+| `200` | ZIP file with current job state |
 | `404` | Job not found |
 | `500` | Server error |
 
@@ -144,14 +132,14 @@ Cancel a running job.
 
 **Parameters**
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `id` | integer | Job ID to terminate |
-
 **Example**
 
 ```bash
-curl -X POST http://localhost:5000/terminate/1
+# Check status (returns JSON when not completed)
+curl http://localhost:5000/download/1
+
+# Download results (returns ZIP when completed)
+curl -o results.zip http://localhost:5000/download/1
 ```
 
 **Response**

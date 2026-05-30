@@ -51,6 +51,21 @@ determined actors. Input scripts are still expected to come from trusted
 or semi-trusted sources. True isolation must be enforced at the
 deployment level using the container hardening measures below.
 
+### Path Traversal Protection
+
+All ZIP file operations include automatic path traversal protection.
+During extraction, paths are canonicalized and checked to ensure they
+remain within the job working directory. Attempts to escape using `..`
+in file paths (e.g., `../../etc/passwd`) are rejected with an error.
+This protection applies to:
+- Job submission (incoming files)
+- Result retrieval (partial and complete downloads)
+- Both server and client operations
+
+This is a defense-in-depth measure. While file names are already sanitized
+on upload, path traversal protection provides an additional safety layer
+against malformed archives or implementation bugs.
+
 ### Container Hardening
 
 The client executes user-submitted scripts with the full privileges of

@@ -53,6 +53,9 @@ curl http://localhost:5000/download/1
 # Download results (when status is "Completed", returns zip)
 curl -o results.zip http://localhost:5000/download/1
 
+# Debug stuck/incomplete jobs - download current state
+curl -o partial_results.zip http://localhost:5000/download_partial/1
+
 # Cancel a running job
 curl -X POST http://localhost:5000/terminate/1
 ```
@@ -84,6 +87,8 @@ cargo build --release
 
 ## Security
 
+## Script Execution
+
 The client component executes user-submitted `run.sh` scripts
 with the full privileges of the process. No filesystem isolation
 (chroot, namespaces, etc.) is enforced — the script has the same
@@ -96,6 +101,18 @@ exfiltration tools, reverse shells, privilege escalation, etc.).
 sandbox. It can be bypassed by determined actors. Input scripts
 are still expected to come from trusted or semi-trusted sources.
 True isolation must be enforced at the deployment level.
+
+**Important**: The script validator is a sanity check, not a
+sandbox. It can be bypassed by determined actors. Input scripts
+are still expected to come from trusted or semi-trusted sources.
+True isolation must be enforced at the deployment level.
+
+## Path Traversal Protection
+
+All zip file operations include path traversal protection to prevent
+malicious archives from escaping the job directory. Files with paths
+like `../../etc/passwd` are automatically rejected during extraction.
+This protection applies to both job submission and result retrieval.
 
 **Recommended hardening when deploying:**
 
