@@ -89,8 +89,31 @@ pub(crate) fn write_directory_to_zip<W: std::io::Write + std::io::Seek>(
     let walkdir = WalkDir::new(src_dir);
     let it = walkdir.into_iter();
 
+    let canonical_source = std::fs::canonicalize(src_dir).map_err(|_| {
+        zip::result::ZipError::Io(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Failed to canonicalize source directory",
+        ))
+    })?;
+
     for entry in it.filter_map(|e| e.ok()) {
         let path = entry.path();
+        
+        // Check for path traversal: canonicalize the path and ensure it's within src_dir
+        let canonical_path = std::fs::canonicalize(path).map_err(|_| {
+            zip::result::ZipError::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Failed to canonicalize path",
+            ))
+        })?;
+        
+        if !canonical_path.starts_with(&canonical_source) {
+            return Err(zip::result::ZipError::Io(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Path traversal detected",
+            )));
+        }
+        
         if let Ok(name) = path.strip_prefix(src_dir) {
             // Skip the root directory itself
             if name.as_os_str().is_empty() {
@@ -685,18 +708,10 @@ mod tests {
         let src_dir = temp_dir.path().join("nonexistent");
         let zip_path = temp_dir.path().join("output.zip");
 
-        // When source doesn't exist, walkdir creates an empty iterator
-        // The zip will be created but will be empty (0 entries)
+        // When source doesn't exist, canonicalization fails
         let result = zip_directory(&src_dir, &zip_path);
 
-        // The function succeeds but creates an empty zip
-        assert!(result.is_ok());
-        assert!(zip_path.exists());
-
-        // Verify it's empty
-        let file = File::open(&zip_path).unwrap();
-        let archive = zip::ZipArchive::new(file).unwrap();
-        assert_eq!(archive.len(), 0);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -820,19 +835,11 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let src_dir = temp_dir.path().join("nonexistent");
 
-        // When source doesn't exist, walkdir creates an empty iterator
-        // The zip will be created but will be empty (0 entries)
+        // When source doesn't exist, canonicalization fails
         let result = zip_directory_to_bytes(&src_dir);
 
-        // The function succeeds but creates an empty zip
-        assert!(result.is_ok());
-        let bytes = result.unwrap();
-        assert!(!bytes.is_empty());
-
-        // Verify it's empty
-        let cursor = std::io::Cursor::new(bytes);
-        let archive = zip::ZipArchive::new(cursor).unwrap();
-        assert_eq!(archive.len(), 0);
+        // The function should fail for non-existent directory
+        assert!(result.is_err());
     }
 
     // ===== write_directory_to_zip tests ===== 
@@ -960,19 +967,10 @@ mod tests {
         let buffer = Vec::new();
         let zip = ZipWriter::new(std::io::Cursor::new(buffer));
 
-        // When source doesn't exist, walkdir creates an empty iterator
-        // The function should succeed and return an empty zip
+        // When source doesn't exist, canonicalization fails
         let result = write_directory_to_zip(&src_dir, zip);
 
-        assert!(result.is_ok());
-        let cursor = result.unwrap();
-        let bytes = cursor.into_inner();
-        assert!(!bytes.is_empty());
-
-        // Verify it's empty
-        let cursor = std::io::Cursor::new(bytes);
-        let archive = zip::ZipArchive::new(cursor).unwrap();
-        assert_eq!(archive.len(), 0);
+        assert!(result.is_err());
     }
 
     #[test]
