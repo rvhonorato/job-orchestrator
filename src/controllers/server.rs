@@ -325,7 +325,6 @@ mod tests {
     use sqlx::SqlitePool;
     use std::collections::HashMap;
     use std::fs;
-    use std::io::Read;
     use tempfile::TempDir;
     use tower::ServiceExt;
 
