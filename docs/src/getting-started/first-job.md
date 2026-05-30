@@ -82,6 +82,16 @@ Once the status is `Completed`, the same endpoint returns the ZIP file:
 curl -o results.zip http://localhost:5000/download/1
 ```
 
+## Downloading Partial Results
+
+To inspect the current state of a job regardless of completion status
+(useful for debugging stuck jobs), use the `/download_partial/{id}` endpoint:
+
+```bash
+# Get current state of job even if incomplete
+curl -o partial_results.zip http://localhost:5000/download_partial/1
+````
+
 Extract and view:
 
 ```bash
@@ -151,6 +161,29 @@ curl -X POST http://localhost:5000/upload \
   -F "service=example"
 ```
 
+## Security
+
+### Script Execution
+
+The client executes user-submitted `run.sh` scripts with full privileges.
+While a script validator rejects obviously dangerous patterns (destructive
+commands, network exfiltration tools, reverse shells, privilege escalation),
+it is NOT a sandbox and can be bypassed by determined actors.
+
+**Important**: Always run the client inside a container with:
+- Resource limits (CPU, memory, PIDs)
+- Read-only root filesystem
+- Drop all capabilities (`--cap-drop=ALL`)
+- Internal network only (no external exposure)
+- Non-root user
+
+See [Production Deployment](../deployment/production.md) for details.
+
+### Path Traversal Protection
+
+All zip operations include path traversal protection. Paths attempting to
+escape the job directory (e.g., `../../etc/passwd`) are automatically rejected.
+
 ## Important Notes
 
 ### The `run.sh` Script
@@ -174,6 +207,27 @@ This ensures that when your `run.sh` exits, it writes the exit code to `.orchest
 ### File Size Limits
 
 The default maximum upload size is 400MB. This can be configured on the server.
+
+### Path Traversal Protection
+
+The system includes built-in protection against path traversal attacks during
+zip file operations. Maliciously crafted files with paths like `../../etc/passwd`
+are automatically rejected. This protection applies to both job submission
+and result retrieval operations.
+
+### User ID Parameter
+
+Jobs can be submitted with a `user_id` for quota management:
+
+```bash
+curl -X POST http://localhost:5000/upload \
+  -F "file=@run.sh" \
+  -F "user_id=1" \
+  -F "service=example"
+```
+
+If omitted, `user_id` defaults to 0. This allows the orchestrator to enforce
+per-user quotas and track resource usage.
 
 ### Job Retention
 

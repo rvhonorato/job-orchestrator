@@ -7,6 +7,7 @@
 - [Installation](./getting-started/installation.md)
 - [Quick Start](./getting-started/quick-start.md)
 - [Your First Job](./getting-started/first-job.md)
+- [Partial Downloads and Debugging](./getting-started/partial-downloads.md)
 
 # Architecture
 

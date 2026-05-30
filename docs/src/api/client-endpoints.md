@@ -57,6 +57,48 @@ curl -X POST http://localhost:9000/submit \
 
 ---
 
+### GET /retrieve_partial/{id}
+
+Retrieve current payload state regardless of completion status.
+
+Use this endpoint to debug stuck or incomplete payloads by downloading
+the current workspace state as a ZIP file. This endpoint is typically
+called by the orchestrator server, not end users.
+
+**Parameters**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | integer | Payload ID from submit response |
+
+**Example**
+
+```bash
+# Download partial results for debugging
+curl -o partial_results.zip http://localhost:9000/retrieve_partial/1
+```
+
+**Response**
+
+- Content-Type: `application/zip`
+- Body: ZIP archive containing current payload directory state
+
+**Status Codes**
+
+| Code | Description |
+|------|--|
+| `200` | ZIP file with current payload state |
+| `404` | Payload not found |
+| `500` | Server error |
+
+**Notes**
+
+- The `/retrieve_partial` endpoint on the client is used internally by the
+  server's `/download_partial` endpoint
+- Path traversal protection is applied to all ZIP operations
+
+---
+
 ### GET /retrieve/{id}
 
 Retrieve results of a completed payload.
