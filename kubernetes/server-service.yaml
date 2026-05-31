@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: job-orchestrator-server
+  labels:
+    app: job-orchestrator
+    component: server
+spec:
+  type: LoadBalancer
+  selector:
+    app: job-orchestrator
+    component: server
+  ports:
+    - name: http
+      port: 80
+      targetPort: 5000
+      protocol: TCP
+  # Optional: Use NodePort for development or ClusterIP for internal-only
+  # type: NodePort
+  # Uncomment the line below if you want to use a specific port on the node
+  # Note: NodePort type automatically assigns a port in the 30000-32767 range
+  # For production, LoadBalancer is recommended for cloud providers
+---
+# Internal service for server-to-client communication
+apiVersion: v1
+kind: Service
+metadata:
+  name: job-orchestrator-server-internal
+  labels:
+    app: job-orchestrator
+    component: server
+    network: internal
+spec:
+  type: ClusterIP
+  selector:
+    app: job-orchestrator
+    component: server
+  ports:
+    - name: http
+      port: 5000
+      targetPort: 5000
+      protocol: TCP

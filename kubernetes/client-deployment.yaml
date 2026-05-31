@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: job-orchestrator-client
+  labels:
+    app: job-orchestrator
+    component: client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: job-orchestrator
+      component: client
+  template:
+    metadata:
+      labels:
+        app: job-orchestrator
+        component: client
+      annotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: client
+          image: job-orchestrator-client:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/job-orchestrator", "client"]
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          envFrom:
+            - configMapRef:
+                name: job-orchestrator-config
+          env:
+            - name: DATA_PATH
+              valueFrom:
+                configMapKeyRef:
+                  name: job-orchestrator-config
+                  key: CLIENT_DATA_PATH
+            - name: DB_PATH
+              valueFrom:
+                configMapKeyRef:
+                  name: job-orchestrator-config
+                  key: CLIENT_DB_PATH
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: job-orchestrator-config
+                  key: CLIENT_PORT
+          ports:
+            - containerPort: 9000
+              name: http
+              protocol: TCP
+          volumeMounts:
+            - name: client-data
+              mountPath: /opt/data
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 2
+              memory: 2Gi
+              # Limit the number of processes (similar to docker-compose deploy limits)
+              # Note: pids limit is not directly supported in Kubernetes, use pod-level limits
+      volumes:
+        - name: client-data
+          persistentVolumeClaim:
+            claimName: job-orchestrator-client-data
+        - name: tmp
+          emptyDir: {}
