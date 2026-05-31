@@ -173,7 +173,7 @@ This protection applies to both job submission and result retrieval.
 - Use `securityContext` to run as non-root
 - Set `readOnlyRootFilesystem: true`
 - Drop capabilities with `capabilities.drop: ["ALL"]`
-- Set resource limits (CPU, memory, PIDs) as shown in `kubernetes.yaml`
+- Set resource limits (CPU, memory, PIDs)
 - Use `NetworkPolicy` to restrict traffic
 - Mount volumes with `noexec` where possible
 - Set a per-job timeout to prevent resource exhaustion

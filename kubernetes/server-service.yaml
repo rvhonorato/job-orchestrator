@@ -21,7 +21,7 @@ spec:
   # Note: NodePort type automatically assigns a port in the 30000-32767 range
   # For production, LoadBalancer is recommended for cloud providers
 ---
-# Internal service for server-to-client communication
+# Internal (ClusterIP) service for in-cluster access to the server API
 apiVersion: v1
 kind: Service
 metadata:
