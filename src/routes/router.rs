@@ -79,6 +79,7 @@ pub fn create_client_routes(pool: SqlitePool, config: Config) -> Router {
     let state = AppState { pool, config };
     Router::new()
         .route("/", get(ping))
+        .route("/health", get(health))
         .route("/load", get(load))
         .route("/submit", post(submit))
         .route("/retrieve/{id}", get(retrieve))

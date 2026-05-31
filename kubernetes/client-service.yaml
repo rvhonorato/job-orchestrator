@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: job-orchestrator-client
+  labels:
+    app: job-orchestrator
+    component: client
+spec:
+  type: ClusterIP
+  selector:
+    app: job-orchestrator
+    component: client
+  ports:
+    - name: http
+      port: 9000
+      targetPort: 9000
+      protocol: TCP

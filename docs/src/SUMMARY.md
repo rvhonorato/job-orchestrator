@@ -29,6 +29,7 @@
 # Deployment
 
 - [Docker](./deployment/docker.md)
+- [Kubernetes](./deployment/kubernetes.md)
 - [Production](./deployment/production.md)
 
 # Development
