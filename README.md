@@ -33,31 +33,87 @@ to diverse computing resources.
 
 ## Quick Start
 
+### Clone
+
 ```bash
-# Using Docker Compose
 git clone https://github.com/rvhonorato/job-orchestrator.git
 cd job-orchestrator
-docker compose up --build
 
-# Submit a job
-curl -X POST http://localhost:5000/upload \
+```
+
+### Using Docker Compose
+
+```bash
+docker compose up --build
+```
+
+### Using Kubernetes (minikube)
+
+```bash
+# Build server image
+docker build --target server -t job-orchestrator-server .
+
+# Build client image (includes application binary gdock)
+docker build --target client -t job-orchestrator-client .
+
+# Load into Minikube
+minikube image load job-orchestrator-server
+minikube image load job-orchestrator-client
+
+# Apply
+minikube kubectl -- apply -f kubernetes/
+
+# Get the external IP
+minikube service job-orchestrator-server --url
+```
+
+See [kubernetes/](kubernetes/) for the manifest files.
+
+### Usage
+
+Get the URL:
+
+```bash
+# for Kubernetes (minikube)
+export URL=$(minikube service job-orchestrator-server --url)
+
+# for docker
+export URL="http://localhost:5000"
+```
+
+Submit a job:
+
+```bash
+curl -X POST $URL/upload \
   -F "file=@example/run.sh" \
   -F "file=@example/2oob_A.pdb" \
   -F "file=@example/2oob_B.pdb" \
   -F "user_id=1" \
   -F "service=example"
+```
 
-# Check status (returns JSON with job state)
-curl http://localhost:5000/download/1
+Check status (returns JSON with job state):
 
-# Download results (when status is "Completed", returns zip)
-curl -o results.zip http://localhost:5000/download/1
+```bash
+curl $URL/download/1
+```
 
-# Debug stuck/incomplete jobs - download current state
-curl -o partial_results.zip http://localhost:5000/download_partial/1
+Download results (when status is "Completed", returns zip):
 
-# Cancel a running job
-curl -X POST http://localhost:5000/terminate/1
+```bash
+curl -o results.zip $URL/download/1
+```
+
+Debug stuck/incomplete jobs - download current state:
+
+```bash
+curl -o partial_results.zip $URL/download_partial/1
+```
+
+Cancel a running job:
+
+```bash
+curl -X POST $URL/terminate/1
 ```
 
 ## Documentation
@@ -68,26 +124,24 @@ curl -X POST http://localhost:5000/terminate/1
 - [Architecture](https://rvhonorato.me/job-orchestrator/architecture/overview.html)
 - [Configuration](https://rvhonorato.me/job-orchestrator/configuration/server.html)
 - [API Reference](https://rvhonorato.me/job-orchestrator/api/server-endpoints.html)
-- [Deployment](https://rvhonorato.me/job-orchestrator/deployment/docker.html)
+- [Deployment](https://rvhonorato.me/job-orchestrator/deployment/kubernetes.html)
 
 **API Documentation**: Available via Swagger UI at
 `http://localhost:5000/swagger/` when running.
 
-## Installation
-
-```bash
-# From crates.io
-cargo install job-orchestrator
-
-# From source
-git clone https://github.com/rvhonorato/job-orchestrator.git
-cd job-orchestrator
-cargo build --release
-```
-
 ## Security
 
-## Script Execution
+**Kubernetes Hardening:**
+
+Apply the same principles from the Security section at the Kubernetes level:
+
+- Use `securityContext` to run as non-root
+- Set `readOnlyRootFilesystem: true`
+- Drop capabilities with `capabilities.drop: ["ALL"]`
+- Set resource limits (CPU, memory, PIDs)
+- Use `NetworkPolicy` to restrict traffic
+- Mount volumes with `noexec` where possible
+- Use Pod Security Standards (restricted profile)
 
 The client component executes user-submitted `run.sh` scripts
 with the full privileges of the process. No filesystem isolation
@@ -116,16 +170,12 @@ This protection applies to both job submission and result retrieval.
 
 **Recommended hardening when deploying:**
 
-- Run the client inside a container with resource limits
-  (CPU, memory, PIDs)
-- Use a read-only root filesystem (`--read-only`)
-- Drop all capabilities (`--cap-drop=ALL`)
-- Place the client on an internal network with no direct
-  external exposure
-- Block outbound network access from the client container
-  (e.g., `--network=internal` or firewall rules)
-- Do not run the container as root
-- Mount the job data directory with `noexec` where possible
+- Use `securityContext` to run as non-root
+- Set `readOnlyRootFilesystem: true`
+- Drop capabilities with `capabilities.drop: ["ALL"]`
+- Set resource limits (CPU, memory, PIDs) as shown in `kubernetes.yaml`
+- Use `NetworkPolicy` to restrict traffic
+- Mount volumes with `noexec` where possible
 - Set a per-job timeout to prevent resource exhaustion
 
 ## Contributing
