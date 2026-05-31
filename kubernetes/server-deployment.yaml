@@ -119,6 +119,4 @@ spec:
             claimName: job-orchestrator-server-data
         - name: tmp
           emptyDir: {}
-      # Use the internal API network for communication between server and client
-      # and the public network for external access
       dnsPolicy: ClusterFirst

@@ -87,8 +87,6 @@ spec:
             limits:
               cpu: 2
               memory: 2Gi
-              # Limit the number of processes (similar to docker-compose deploy limits)
-              # Note: pids limit is not directly supported in Kubernetes, use pod-level limits
       volumes:
         - name: client-data
           persistentVolumeClaim:
