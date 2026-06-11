@@ -4,6 +4,8 @@ pub fn is_pid_running(pid: u32) -> bool {
     Command::new("kill")
         .arg("-0")
         .arg(pid.to_string())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
