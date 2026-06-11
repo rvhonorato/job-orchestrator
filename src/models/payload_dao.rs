@@ -109,8 +109,16 @@ impl Payload {
         let status = std::process::Command::new("kill")
             .arg("-TERM")
             .arg(self.pid.to_string())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .status()?;
         if !status.success() {
+            // The process may have already exited (e.g. PID reused or job
+            // finished on its own). In that case there's nothing left to
+            // kill, so treat it as success rather than retrying forever.
+            if !is_pid_running(self.pid) {
+                return Ok(());
+            }
             return Err(std::io::Error::other(format!(
                 "kill failed for pid {}",
                 self.pid
@@ -286,13 +294,13 @@ mod test {
         // PID 0 should return Ok without doing anything
         assert!(p.kill().is_ok());
 
-        // Nonexistent PID should return Err since kill command fails
+        // Nonexistent PID is treated as already dead, so kill() is idempotent
         p.pid = 999999;
-        assert!(p.kill().is_err());
+        assert!(p.kill().is_ok());
 
         // Another nonexistent PID
         p.pid = 999998;
-        assert!(p.kill().is_err());
+        assert!(p.kill().is_ok());
 
         // Test successful kill of a real process
         // Note: We don't verify the process is actually dead because PIDs can be reused,
