@@ -188,6 +188,16 @@ pub async fn kill(State(state): State<AppState>, Path(id): Path<u32>) -> Respons
     match payload.kill() {
         Ok(_) => {
             payload.mark_as_killed(&state.pool).await.ok();
+
+            // If the payload hasn't started executing yet (pid == 0, still
+            // `Prepared`), there's no process to wait on via the `updater`.
+            // Transition it directly to `Killed` so `runner`'s
+            // `WHERE status = 'prepared'` filter excludes it and it never
+            // gets executed, avoiding an orphaned process later on.
+            if payload.pid == 0 {
+                payload.update_status(Status::Killed, &state.pool).await.ok();
+            }
+
             (StatusCode::OK).into_response()
         }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR).into_response(),
@@ -627,5 +637,55 @@ mod tests {
         // Verify the payload was marked as killed
         let retrieved = Payload::retrieve_id(payload_id, &pool).await.unwrap();
         assert!(retrieved.killed);
+    }
+
+    /// Regression test for #56: killing a payload that is still `Prepared`
+    /// (pid == 0, i.e. it never started executing) must transition it
+    /// directly to `Killed`, not leave it as `Prepared`. Otherwise the
+    /// `runner` would later pick it up (since it filters on
+    /// `Status::Prepared`), execute it, and the `updater` would mark it as
+    /// `Killed` without ever terminating the real spawned process, orphaning
+    /// it.
+    #[tokio::test]
+    async fn test_kill_prepared_payload_transitions_to_killed() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+        let config = make_config(tempdir.path().to_str().unwrap());
+        let app = create_client_routes(pool.clone(), config.clone());
+
+        // Create a payload that is `Prepared` and has not started (pid == 0)
+        let mut payload = Payload::new();
+        payload.set_status(Status::Prepared);
+        payload.add_to_db(&pool).await.unwrap();
+        let payload_id = payload.id;
+
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/kill/{payload_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // The payload must be `Killed`, not left as `Prepared`
+        let retrieved = Payload::retrieve_id(payload_id, &pool).await.unwrap();
+        assert_eq!(retrieved.status, Status::Killed);
+        assert!(retrieved.killed);
+        assert_eq!(retrieved.pid, 0);
+
+        // Regression check: `runner` filters on `Status::Prepared`, so it
+        // must no longer pick up this payload (which would otherwise spawn
+        // the real process and orphan it once the updater short-circuits on
+        // `is_killed()`).
+        let mut queue = crate::models::queue_dao::PayloadQueue::new(&config);
+        queue
+            .list_per_status(Status::Prepared, &pool)
+            .await
+            .unwrap();
+        assert!(
+            !queue.jobs.iter().any(|p| p.id == payload_id),
+            "runner should not pick up a payload that was killed before execution"
+        );
     }
 }
