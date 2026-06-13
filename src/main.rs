@@ -120,6 +120,13 @@ async fn start_client(config: Config) -> anyhow::Result<()> {
         async move { client::updater(pool_clone, config_clone).await }
     });
 
+    // Create the cleaner task
+    let cleaner_task = every(60).second().perform(|| {
+        let pool_clone = pool.clone();
+        let config_clone = config.clone();
+        async move { client::cleaner(pool_clone, config_clone).await }
+    });
+
     // Create app
     let client_app = create_client_routes(pool.clone(), config.clone());
 
@@ -132,6 +139,7 @@ async fn start_client(config: Config) -> anyhow::Result<()> {
     tokio::select! {
         _ = runner_task => {},
         _ = updater_task => {},
+        _ = cleaner_task => {},
         _ = axum::serve(listener, client_app.into_make_service()) => {},
     };
 

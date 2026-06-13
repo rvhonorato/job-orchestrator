@@ -51,6 +51,10 @@ impl Payload {
         self.loc = loc;
     }
 
+    pub fn remove_from_disk(&self) -> Result<(), std::io::Error> {
+        fs::remove_dir_all(&self.loc)
+    }
+
     pub fn prepare(&mut self, data_path: &str) -> Result<(), std::io::Error> {
         self.loc = std::path::Path::new(&data_path).join(self.id.to_string());
 
