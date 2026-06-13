@@ -62,9 +62,9 @@ impl Payload {
         fs::create_dir_all(&self.loc)?;
 
         // Dump data to this directory
-        self.input.iter_mut().for_each(|(filename, data)| {
-            fs::write(self.loc.join(filename), data).expect("Unable to write file")
-        });
+        self.input
+            .iter()
+            .try_for_each(|(filename, data)| fs::write(self.loc.join(filename), data))?;
 
         Ok(())
     }
@@ -196,6 +196,22 @@ mod test {
 
         let content = fs::read_to_string(expected_path).unwrap();
         assert_eq!(content, "Test data");
+    }
+
+    #[tokio::test]
+    async fn test_prepare_write_error_does_not_panic() {
+        let mut p = Payload::new();
+        p.id = 2;
+        // A filename containing a NUL byte is invalid on most filesystems,
+        // so `fs::write` will fail with an `Err` here. This must be
+        // propagated as an `Err` from `prepare`, not cause a panic.
+        p.add_input("bad\0name.txt".to_string(), b"Test data".to_vec());
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_path = temp_dir.path().to_str().unwrap();
+
+        let result = p.prepare(data_path);
+        assert!(result.is_err());
     }
 
     #[test]
