@@ -79,6 +79,14 @@ pub async fn terminate_job(
     // lock the job so no other thread pick it up
     j.update_status(Status::Locked, &pool).await.ok();
 
+    // If the job has never been dispatched to a client (dest_id == 0),
+    // there's nothing running remotely to terminate. Mark it as Killed
+    // directly without contacting the client.
+    if j.dest_id == 0 {
+        j.update_status(Status::Killed, &pool).await.ok();
+        return Ok(());
+    }
+
     match endpoint::kill(&j, &config, Client).await {
         Ok(_) => {
             // Job was killed
@@ -402,6 +410,62 @@ mod test {
         updated_job.retrieve_id(job_id, &pool).await.unwrap();
         assert_eq!(updated_job.status, Status::Killed);
 
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_terminate_job_not_dispatched() {
+        let tempdir = TempDir::new().unwrap();
+        let pool = SqlitePool::connect(":memory:")
+            .await
+            .unwrap_or_else(|e| panic!("Database connection failed: {e}"));
+        create_jobs_table(&pool).await.unwrap();
+
+        let mut config = Config::new().unwrap();
+        config.services.insert(
+            "test".to_string(),
+            Service {
+                name: "test".to_string(),
+                upload_url: "http://example.com/upload".to_string(),
+                download_url: "http://example.com/download".to_string(),
+                terminate_url: "http://example.com/terminate".to_string(),
+                runs_per_user: 5,
+                max_runs: 1,
+            },
+        );
+
+        let mut job = Job::new(tempdir.path().to_str().unwrap());
+        job.set_service("test".to_string());
+        job.set_user_id(1);
+        // dest_id is left at its default of 0 — job was never dispatched
+        job.add_to_db(&pool).await.unwrap();
+        job.update_status(Status::Queued, &pool).await.unwrap();
+        let job_id = job.id;
+        assert_eq!(job.dest_id, 0);
+
+        // Mock the terminate endpoint — it should NEVER be called since
+        // the job was never dispatched to the client.
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/terminate/0")
+            .with_status(200)
+            .expect(0)
+            .create_async()
+            .await;
+
+        if let Some(service) = config.services.get_mut("test") {
+            service.terminate_url = format!("{}/terminate", server.url());
+        }
+
+        let result = terminate_job(job, pool.clone(), config).await;
+        assert!(result.is_ok());
+
+        // Verify the job status was updated to Killed
+        let mut updated_job = Job::new("");
+        updated_job.retrieve_id(job_id, &pool).await.unwrap();
+        assert_eq!(updated_job.status, Status::Killed);
+
+        // The terminate endpoint must never have been hit
         mock.assert_async().await;
     }
 
