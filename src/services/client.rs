@@ -15,7 +15,9 @@ use crate::config::loader::Config;
 use crate::models::queue_dao::PayloadQueue;
 use axum::http::{StatusCode, header};
 use sqlx::SqlitePool;
-use tracing::error;
+use std::fs;
+use std::time::SystemTime;
+use tracing::{debug, error};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
@@ -251,6 +253,64 @@ impl Endpoint for Client {
             }
         }
     }
+}
+
+// Cleaner removes aged-out payload directories from disk and marks them as Cleaned
+pub async fn cleaner(pool: SqlitePool, config: Config) {
+    // List all directories inside the config.data_path
+    let elements = match fs::read_dir(&config.data_path) {
+        Ok(e) => e,
+        Err(_) => {
+            error!("could not read directory: {}", config.data_path);
+            return;
+        }
+    };
+
+    let futures = elements.into_iter().map(|entry| async {
+        let entry = match entry {
+            Ok(d) => d,
+            Err(_) => {
+                error!("could not read subdir");
+                return;
+            }
+        };
+        let path = entry.path();
+        if !path.is_dir() {
+            return;
+        }
+        let metadata = match fs::metadata(&path) {
+            Ok(m) => m,
+            Err(_) => {
+                error!("could not read metadata");
+                return;
+            }
+        };
+        if let Ok(mod_time) = metadata.modified() {
+            let current_time = SystemTime::now();
+
+            if let Ok(age) = current_time.duration_since(mod_time)
+                && age >= config.max_age
+            {
+                debug!(
+                    "{:?} - {:?} - {:?}",
+                    path.display(),
+                    age.as_secs(),
+                    config.max_age
+                );
+                match Payload::retrieve_by_loc(path.display().to_string(), &pool).await {
+                    Ok(mut payload) => {
+                        let _ = payload.update_status(Status::Cleaned, &pool).await;
+                        if let Err(e) = payload.remove_from_disk() {
+                            error!("error: {:?} - could not remove {:?}", e, path)
+                        }
+                    }
+                    Err(e) => error!("{:?} - not found: {:?}", e, path),
+                }
+            }
+        };
+    });
+
+    futures::future::join_all(futures).await;
 }
 
 // Runner will spawn the processes in the background
@@ -644,6 +704,80 @@ mod test {
             }
             _ => panic!("Expected UnexpectedStatus error for non-zip content"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_cleaner_invalid_path() {
+        let tempdir = TempDir::new().unwrap();
+        let db_path = tempdir.path().join("test.db");
+        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
+
+        let mut config = Config::new().unwrap();
+        config.data_path = "/nonexistent/path/does/not/exist".to_string();
+
+        // Should not panic — cleaner logs the error and returns
+        cleaner(pool, config).await;
+    }
+
+    #[tokio::test]
+    async fn test_cleaner_dir_not_in_db() {
+        let tempdir = TempDir::new().unwrap();
+        let db_path = tempdir.path().join("test.db");
+        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
+
+        let orphan_dir = tempdir.path().join("orphan_payload");
+        fs::create_dir_all(&orphan_dir).unwrap();
+
+        let mut config = Config::new().unwrap();
+        config.data_path = tempdir.path().to_str().unwrap().to_string();
+        config.max_age = std::time::Duration::from_nanos(1);
+
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+
+        cleaner(pool, config).await;
+
+        // Directory is still there — retrieve_by_loc failed so nothing was removed
+        assert!(orphan_dir.exists());
+    }
+
+    #[tokio::test]
+    async fn test_cleaner_removes_aged_payload() {
+        let tempdir = TempDir::new().unwrap();
+        let db_path = tempdir.path().join("test.db");
+        let pool = crate::datasource::db::init_payload_db(db_path.to_str().unwrap()).await;
+
+        let mut config = Config::new().unwrap();
+        config.data_path = tempdir.path().to_str().unwrap().to_string();
+
+        // Add a payload and prepare it on disk
+        let mut payload = Payload::new();
+        payload
+            .add_to_db(&pool)
+            .await
+            .expect("Failed to add payload to DB");
+        payload
+            .prepare(&config.data_path)
+            .expect("Failed to prepare payload");
+        payload
+            .update_loc(&pool)
+            .await
+            .expect("Failed to update payload loc");
+
+        config.max_age = std::time::Duration::from_nanos(1);
+
+        // Sleep to allow the directory to age
+        tokio::time::sleep(std::time::Duration::from_nanos(1)).await;
+
+        assert!(payload.loc.exists());
+
+        cleaner(pool.clone(), config).await;
+
+        assert!(!payload.loc.exists());
+
+        let cleaned = Payload::retrieve_id(payload.id, &pool)
+            .await
+            .expect("Failed to retrieve payload");
+        assert_eq!(cleaned.status, Status::Cleaned);
     }
 
     #[tokio::test]
