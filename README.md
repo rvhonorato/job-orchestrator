@@ -7,84 +7,25 @@
 [![Crates.io](https://img.shields.io/crates/v/job-orchestrator)](https://crates.io/crates/job-orchestrator)
 [![Documentation](https://img.shields.io/badge/docs-mdbook-blue)](https://rvhonorato.me/job-orchestrator/)
 
-> An asynchronous job orchestration system for managing
-> and distributing computational workloads across
-> heterogeneous computing resources with intelligent
-> quota-based load balancing.
+> An asynchronous job orchestration system for managing and distributing
+> computational workloads across heterogeneous computing resources with
+> intelligent quota-based load balancing.
 
-## Overview
-
-The `job-orchestrator` is a central component of
-[WeNMR](https://wenmr.science.uu.nl), a worldwide
-e-Infrastructure for structural biology operated by
-the [BonvinLab](https://bonvinlab.org) at
-[Utrecht University](https://uu.nl). It serves as a
-reactive middleware layer that connects web applications
-to diverse computing resources.
-
-**Key Features:**
-
-- Asynchronous job management with Rust + Tokio
-- Quota-based load balancing per user/service
-- Dual-mode architecture (server + client)
-- RESTful API with Swagger UI
-- Automatic job cleanup
-- Job termination and cancellation
+Part of [WeNMR](https://wenmr.science.uu.nl), operated by
+[BonvinLab](https://bonvinlab.org) at [Utrecht University](https://uu.nl).
 
 ## Quick Start
-
-### Clone
 
 ```bash
 git clone https://github.com/rvhonorato/job-orchestrator.git
 cd job-orchestrator
-
-```
-
-### Using Docker Compose
-
-```bash
 docker compose up --build
 ```
 
-### Using Kubernetes (minikube)
+The server starts on port 5000. Submit a job:
 
 ```bash
-# Build server image
-docker build --target server -t job-orchestrator-server .
-
-# Build client image (includes application binary gdock)
-docker build --target client -t job-orchestrator-client .
-
-# Load into Minikube
-minikube image load job-orchestrator-server
-minikube image load job-orchestrator-client
-
-# Apply
-minikube kubectl -- apply -f kubernetes/
-
-# Get the external IP
-minikube service job-orchestrator-server --url
-```
-
-See [kubernetes/](kubernetes/) for the manifest files.
-
-### Usage
-
-Get the URL:
-
-```bash
-# for Kubernetes (minikube)
-export URL=$(minikube service job-orchestrator-server --url)
-
-# for docker
-export URL="http://localhost:5000"
-```
-
-Submit a job:
-
-```bash
-curl -X POST $URL/upload \
+curl -X POST http://localhost:5000/upload \
   -F "file=@example/run.sh" \
   -F "file=@example/2oob_A.pdb" \
   -F "file=@example/2oob_B.pdb" \
@@ -92,96 +33,25 @@ curl -X POST $URL/upload \
   -F "service=example"
 ```
 
-Check status (returns JSON with job state):
-
-```bash
-curl $URL/download/1
-```
-
-Download results (when status is "Completed", returns zip):
-
-```bash
-curl -o results.zip $URL/download/1
-```
-
-Debug stuck/incomplete jobs - download current state:
-
-```bash
-curl -o partial_results.zip $URL/download_partial/1
-```
-
-Cancel a running job:
-
-```bash
-curl -X POST $URL/terminate/1
-```
+Interactive API docs available at `http://localhost:5000/swagger`.
 
 ## Documentation
 
-**[Full Documentation](https://rvhonorato.me/job-orchestrator/)**
+**[Full Documentation →](https://rvhonorato.me/job-orchestrator/)**
 
 - [Installation](https://rvhonorato.me/job-orchestrator/getting-started/installation.html)
+- [Your First Job](https://rvhonorato.me/job-orchestrator/getting-started/first-job.html)
 - [Architecture](https://rvhonorato.me/job-orchestrator/architecture/overview.html)
 - [Configuration](https://rvhonorato.me/job-orchestrator/configuration/server.html)
 - [API Reference](https://rvhonorato.me/job-orchestrator/api/server-endpoints.html)
-- [Deployment](https://rvhonorato.me/job-orchestrator/deployment/kubernetes.html)
-
-**API Documentation**: Available via Swagger UI at
-`http://localhost:5000/swagger` when running.
-
-## Security
-
-### Script Execution
-
-The client component executes user-submitted `run.sh` scripts
-with the full privileges of the process. No filesystem isolation
-(chroot, namespaces, etc.) is enforced — the script has the same
-access as the client process itself. Input filenames are sanitized,
-and a built-in script validator rejects scripts containing
-obviously dangerous patterns (destructive commands, network
-exfiltration tools, reverse shells, privilege escalation, etc.).
-
-**Important**: The script validator is a sanity check, not a
-sandbox. It can be bypassed by determined actors. Input scripts
-are still expected to come from trusted or semi-trusted sources.
-True isolation must be enforced at the deployment level.
-
-### Path Traversal Protection
-
-All zip file operations include path traversal protection to prevent
-malicious archives from escaping the job directory. Files with paths
-like `../../etc/passwd` are automatically rejected during extraction.
-This protection applies to both job submission and result retrieval.
-
-**Recommended hardening when deploying:**
-
-- Run the client inside a container with resource limits
-  (CPU, memory, PIDs)
-- Use a read-only root filesystem (`--read-only`)
-- Drop all capabilities (`--cap-drop=ALL`)
-- Place the client on an internal network with no direct
-  external exposure
-- Block outbound network access from the client container
-- Do not run the container as root
-- Set a per-job timeout to prevent resource exhaustion
-
-## Contributing
-
-Contributions, bug reports, and feature requests are
-welcome via
-[GitHub Issues](https://github.com/rvhonorato/job-orchestrator/issues).
-
-See the
-[Contributing Guide](https://rvhonorato.me/job-orchestrator/development/contributing.html)
-for details.
+- [Deployment](https://rvhonorato.me/job-orchestrator/deployment/docker.html)
+- [Security](https://rvhonorato.me/job-orchestrator/deployment/production.html#security)
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE) for details.
 
 ## Contact
 
-- **Issues**:
-  [GitHub Issues](https://github.com/rvhonorato/job-orchestrator/issues)
-- **Email**:
-  Rodrigo V. Honorato <rvhonorato@protonmail.com>
+- **Issues**: [GitHub Issues](https://github.com/rvhonorato/job-orchestrator/issues)
+- **Email**: Rodrigo V. Honorato <rvhonorato@protonmail.com>
