@@ -41,15 +41,12 @@ Common issues and solutions for job-orchestrator.
 
 3. **Missing service configuration**
 
-   ```
-   Error: No services configured
-   ```
-
-   Solution: Configure at least one service:
+   The server starts without services but will return `400 Invalid service` on every upload. Configure at least one service:
 
    ```bash
    export SERVICE_EXAMPLE_UPLOAD_URL=http://client:9000/submit
    export SERVICE_EXAMPLE_DOWNLOAD_URL=http://client:9000/retrieve
+   export SERVICE_EXAMPLE_TERMINATE_URL=http://client:9000/kill
    ```
 
 ### Jobs Stuck in Queued
@@ -60,9 +57,11 @@ Common issues and solutions for job-orchestrator.
 
 1. **Quota exhausted**
 
-   Check if user has reached their limit:
-   - Default quota is 5 concurrent jobs per user per service
-   - Wait for running jobs to complete, or increase quota
+   There are two independent limits — either can hold a job in `Queued`:
+   - `RUNS_PER_USER` (default: 5) — user has too many active jobs for this service
+   - `MAX_RUNS` (default: 10) — the service has reached its total concurrent job cap
+
+   Wait for running jobs to complete, or increase the relevant limit.
 
 2. **Client unreachable**
 
@@ -111,12 +110,13 @@ Common issues and solutions for job-orchestrator.
 
 1. **Missing required fields**
 
+   Both `user_id` and `service` are required:
+
    ```bash
-   # Ensure all fields are provided
    curl -X POST http://localhost:5000/upload \
      -F "file=@run.sh" \
-     -F "user_id=1" \      # Required
-     -F "service=example"   # Required
+     -F "user_id=1" \
+     -F "service=example"
    ```
 
 2. **Unknown service**
@@ -167,9 +167,10 @@ Common issues and solutions for job-orchestrator.
 **Possible Causes**:
 
 1. **Job not in a terminable state**
-   - Only jobs in `Queued`, `Submitted`, or `Running` can be terminated
+   - Only jobs in `Submitted` or `Running` status can be terminated
+   - `Queued` jobs have no client payload yet and termination will fail
    - Already completed or failed jobs cannot be terminated
-   - Solution: Check job status first with `GET /download/:id`
+   - Solution: Check job status first with `GET /download/{id}`
 
 2. **Client unreachable**
    - Server cannot reach client to send termination request
@@ -217,18 +218,44 @@ Common issues and solutions for job-orchestrator.
 
    Check client logs, may need restart
 
-2. **`run.sh` not found or not executable**
+2. **`run.sh` missing the required trap**
 
-   Ensure the script exists and is executable:
+   The client rejects scripts that don't contain the exit trap:
 
    ```bash
-   # In your upload
-   chmod +x run.sh
+   #!/bin/bash
+   trap 'echo "$?" > .orchestrator.exit' EXIT
+   # ... rest of script
    ```
 
-3. **Permission issues**
+   Without this, the script is rejected with `Invalid` status before execution starts.
+
+3. **Script fails validation**
+
+   The client validator blocks unsafe patterns. Check the job status — if it shows `Invalid`, the script was rejected. See [Script Validation](../deployment/production.md#script-validation) for the full list of blocked patterns.
+
+4. **Permission issues**
 
    Client working directory may have permission issues
+
+### Job Status is Invalid
+
+**Symptom**: Job status is `Invalid` — the client rejected the script before running it
+
+**Possible Causes**:
+
+1. **Missing exit trap** — script must contain:
+   ```bash
+   trap 'echo "$?" > .orchestrator.exit' EXIT
+   ```
+
+2. **Script too large** — maximum script size is 20 MiB
+
+3. **Script not valid UTF-8**
+
+4. **Script contains a blocked pattern** — see [Script Validation](../deployment/production.md#script-validation) for the full list (network tools, destructive commands, privilege escalation, etc.)
+
+`Invalid` jobs are cleaned up after `MAX_AGE` like any other terminal state.
 
 ### Execution Fails
 
