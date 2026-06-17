@@ -23,9 +23,11 @@ sequenceDiagram
     Server->>Server: Update status: Submitted
 
     Note over Client: Runner task (500ms interval)
-    Client->>Executor: Execute run.sh
-    Executor->>Executor: Process files
-    Executor-->>Client: Exit code
+    Client->>Client: Update status: Running
+    Client->>Executor: Execute run.sh (spawns process)
+
+    Note over Client: Updater task (500ms interval)
+    Executor-->>Client: .orchestrator.exit written
     Client->>Client: Update status: Completed
 
     Note over Server: Getter task (500ms interval)
@@ -54,35 +56,26 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Queued: Job submitted
+    [*] --> Queued: submitted
+    Queued --> Processing: sender picks up
+    Processing --> Submitted: sent to client
+    Processing --> Failed: client unreachable
 
-    Queued --> Processing: Sender picks up job
-    Processing --> Submitted: Sent to client
-    Processing --> Failed: Client unreachable
+    Submitted --> Running: execution started
+    Running --> Completed: exit 0
+    Running --> Failed: non-zero exit
+    Running --> Invalid: bad script
+    Submitted --> Killed: terminated early
+    Running --> Killed: terminated
 
-    Submitted --> Running: Client started execution
-    Submitted --> Failed: Client execution failed
-    Running --> Completed: Execution successful
-    Running --> Killed: Terminated via API
-
-    Submitted --> Killed: Terminated before execution
-    Running --> Killed: Process killed
-
-    Submitted --> Locked: Termination in progress
-    Running --> Locked: Termination in progress
-    Locked --> Killed: Termination confirmed
-    Locked --> Submitted: Termination failed, restore
-    Locked --> Running: Termination failed, restore
-
-    Unknown --> Completed: Retry successful
-
-    Completed --> Cleaned: After MAX_AGE
-    Failed --> Cleaned: After MAX_AGE
-    Killed --> Cleaned: After MAX_AGE
-    Unknown --> Cleaned: After MAX_AGE (if applicable)
-
+    Completed --> Cleaned: MAX_AGE
+    Failed --> Cleaned: MAX_AGE
+    Invalid --> Cleaned: MAX_AGE
+    Killed --> Cleaned: MAX_AGE
     Cleaned --> [*]
 ```
+
+> `Locked` and `Unknown` are transient internal states not shown above — see the table below for details.
 
 ## State Descriptions
 
@@ -93,7 +86,8 @@ stateDiagram-v2
 | **Submitted** | Job successfully sent to client, awaiting execution |
 | **Running** | Client is actively executing the job |
 | **Completed** | Job finished successfully, results available |
-| **Failed** | Job failed permanently (client unreachable, execution error) |
+| **Failed** | Job failed permanently (execution error — non-zero exit code) |
+| **Invalid** | Job rejected by client (`run.sh` missing, unsafe script, or validation failure) |
 | **Unknown** | Temporary state when retrieval fails, will retry |
 | **Locked** | Job is temporarily locked (e.g., during termination) |
 | **Killed** | Job was manually terminated via API |

@@ -40,6 +40,10 @@ flowchart TB
     ClientDB --> Runner
     Runner --> Executor
     Executor --> ClientFS
+    ClientDB --> Updater
+    Updater --> ClientDB
+    ClientDB --> ClientCleaner
+    ClientCleaner --> ClientFS
 ```
 
 ## Components

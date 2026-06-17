@@ -37,14 +37,28 @@ This guide covers best practices for deploying job-orchestrator in production en
 
 ### Script Validation
 
-The client includes a built-in script validator that rejects `run.sh`
-scripts containing obviously dangerous patterns before execution. This
-covers destructive commands (`rm -rf /`, `mkfs`), network exfiltration
-tools (`curl`, `wget`, `socat`), reverse shells (`/dev/tcp/`), privilege
-escalation (`sudo`, `chmod +s`), container escapes (`nsenter`, `docker`),
-obfuscated execution (`base64 | bash`, `python -c`), persistence
-mechanisms (`crontab`, `systemctl`), crypto miners, and environment
-secret access.
+The client validates `run.sh` before execution. A script is rejected if it:
+
+- **Exceeds 20 MiB** in size
+- **Is not valid UTF-8**
+- **Is missing the required exit trap** — the script must contain `trap 'echo $? > .orchestrator.exit' EXIT`
+- **Matches any dangerous pattern**, including:
+
+| Category | Blocked patterns |
+|----------|-----------------|
+| Destructive commands | `rm` targeting `/` or `~`, `mkfs`, `dd` to/from devices |
+| Sensitive file access | `/etc/passwd`, `/etc/shadow`, `/etc/sudoers`, `/proc/`, `/sys/`, `~/.ssh/`, `/root/`, Docker socket |
+| Network tools | `curl`, `wget`, `nc`, `ncat`, `socat`, `ssh`, `scp`, `sftp`, `telnet`, `rsync` |
+| Reverse shells | `/dev/tcp/`, `/dev/udp/` |
+| Privilege escalation | `sudo`, `su`, `chown`, dangerous `chmod` |
+| Container/system escape | `chroot`, `nsenter`, `unshare`, `mount`, `umount`, `docker`, `kubectl` |
+| Kernel manipulation | `sysctl`, `modprobe`, `insmod`, `rmmod`, `iptables`, `nftables` |
+| Obfuscated execution | `base64 \| bash`, `eval`, `python -c`, `perl -e`, `ruby -e` |
+| Persistence | `crontab`, `/etc/cron`, `systemctl`, `service`, `at` |
+| Fork bombs | `:(){ ...\|: }` |
+| Resource exhaustion | `stress`, `stress-ng` |
+| Crypto miners | `xmrig`, `minerd`, `cpuminer` |
+| Environment secrets | `$AWS_*`, `$SECRET`, `$TOKEN`, `$PASSWORD`, `$API_KEY` |
 
 **This is a sanity check, not a sandbox.** It can be bypassed by
 determined actors. Input scripts are still expected to come from trusted
@@ -108,9 +122,9 @@ networks:
     internal: true
 ```
 
-**Future improvement:** Run the container as a non-root user (`USER appuser`
-in the Dockerfile). This requires migrating ownership of existing volumes
-first -- see the TODO in the Dockerfile.
+**Note:** The Kubernetes manifests already run as non-root (`runAsUser: 1000`).
+For Docker deployments, the Dockerfile does not yet create a dedicated non-root
+user — see the TODO in the Dockerfile.
 
 ### Network Security
 
@@ -134,45 +148,47 @@ first -- see the TODO in the Dockerfile.
 ### Reverse Proxy (nginx)
 
 ```nginx
-upstream orchestrator {
-    server 127.0.0.1:5000;
-}
+# http block — limit_req_zone must be at http context, not inside server
+http {
+    limit_req_zone $binary_remote_addr zone=upload:10m rate=10r/s;
 
-server {
-    listen 443 ssl http2;
-    server_name jobs.example.com;
+    upstream orchestrator {
+        server 127.0.0.1:5000;
+    }
+
+    server {
+        listen 443 ssl http2;
+        server_name jobs.example.com;
 
     ssl_certificate /etc/nginx/certs/cert.pem;
     ssl_certificate_key /etc/nginx/certs/key.pem;
 
-    # Rate limiting
-    limit_req_zone $binary_remote_addr zone=upload:10m rate=10r/s;
+        location /upload {
+            limit_req zone=upload burst=20 nodelay;
+            client_max_body_size 400M;
+            proxy_pass http://orchestrator;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+        }
 
-    location /upload {
-        limit_req zone=upload burst=20 nodelay;
-        client_max_body_size 400M;
-        proxy_pass http://orchestrator;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
+        location /download {
+            proxy_pass http://orchestrator;
+            proxy_set_header Host $host;
+        }
 
-    location /download {
-        proxy_pass http://orchestrator;
-        proxy_set_header Host $host;
-    }
+        location /terminate {
+            proxy_pass http://orchestrator;
+            proxy_set_header Host $host;
+        }
 
-    location /terminate {
-        proxy_pass http://orchestrator;
-        proxy_set_header Host $host;
-    }
+        location /health {
+            proxy_pass http://orchestrator;
+        }
 
-    location /health {
-        proxy_pass http://orchestrator;
-    }
-
-    # Block swagger in production (optional)
-    location /swagger {
-        deny all;
+        # Block swagger in production (optional)
+        location /swagger {
+            deny all;
+        }
     }
 }
 ```
@@ -228,8 +244,8 @@ Storage = (avg_job_size) × (jobs_per_day) × (retention_days)
 Example:
 - 10MB average job
 - 500 jobs/day
-- 2 day retention
-= 10MB × 500 × 2 = 10GB
+- 10 day retention (default MAX_AGE)
+= 10MB × 500 × 10 = 50GB
 ```
 
 ## Monitoring
@@ -245,27 +261,6 @@ curl -f http://localhost:9000/health
 
 # Client load
 curl http://localhost:9000/load
-```
-
-### Prometheus Metrics (External)
-
-Use a sidecar or external monitoring:
-
-```yaml
-services:
-  prometheus:
-    image: prom/prometheus
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
-
-  # Monitor container metrics
-  cadvisor:
-    image: gcr.io/cadvisor/cadvisor
-    volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
 ```
 
 ### Log Aggregation

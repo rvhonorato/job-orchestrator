@@ -38,7 +38,9 @@ curl -X POST http://localhost:9000/submit \
 {
   "id": 1,
   "status": "Prepared",
-  "loc": "/opt/data/abc123-def456"
+  "loc": "/opt/data/abc123-def456",
+  "pid": 0,
+  "killed": false
 }
 ```
 
@@ -47,6 +49,7 @@ curl -X POST http://localhost:9000/submit \
 | Code | Description |
 |------|-------------|
 | `200` | Payload received successfully |
+| `400` | Malformed multipart request |
 | `500` | Server error |
 
 **Notes**
@@ -86,7 +89,7 @@ curl -o partial_results.zip http://localhost:9000/retrieve_partial/1
 **Status Codes**
 
 | Code | Description |
-|------|--|
+|------|-------------|
 | `200` | ZIP file with current payload state |
 | `404` | Payload not found |
 | `500` | Server error |
@@ -123,7 +126,9 @@ When the payload is **not yet completed**, returns a JSON body:
 {
   "id": 1,
   "status": "Running",
-  "loc": "/opt/data/abc123-def456"
+  "loc": "/opt/data/abc123-def456",
+  "pid": 12345,
+  "killed": false
 }
 ```
 
@@ -144,7 +149,6 @@ When the payload is **completed**, returns:
 
 - The ZIP includes all files in the working directory after `run.sh` execution
 - Original input files are included unless deleted by `run.sh`
-- After successful retrieval, the payload may be cleaned up
 
 ---
 
@@ -183,8 +187,7 @@ On failure:
 
 **Notes**
 
-- The payload must be in `Running` or `Prepared` status
-- Sends SIGTERM to the process group
+- Sends SIGTERM to the process PID stored for the payload; silently succeeds if no PID is set yet
 - The payload status will change to `Killed`
 - This endpoint is called by the server's `/terminate/{id}` endpoint
 
@@ -256,6 +259,9 @@ Payloads on the client go through these states:
 | `Running` | Currently executing `run.sh` |
 | `Completed` | Execution finished successfully |
 | `Failed` | Execution failed (non-zero exit code) |
+| `Invalid` | `run.sh` missing, unsafe, or failed validation |
+| `Killed` | Terminated via `/kill/{id}` |
+| `Cleaned` | Payload directory removed by the cleaner task |
 
 ## Security Considerations
 

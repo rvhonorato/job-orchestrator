@@ -12,8 +12,8 @@ docker compose up --build
 
 This starts:
 
-- **Orchestrator server** on port 5000
-- **Example client** on port 9000
+- **Orchestrator server** on port 5000 (exposed to host)
+- **Example client** on an internal network (not exposed to host)
 
 ## Verify It's Running
 

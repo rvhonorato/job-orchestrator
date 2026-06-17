@@ -13,7 +13,7 @@ command = "mdbook-mermaid"
 
 [output.html]
 additional-js = ["mermaid.min.js", "mermaid-init.js"]
-default-theme = "light"
+default-theme = "ayu"
 preferred-dark-theme = "ayu"
 git-repository-url = "https://github.com/rvhonorato/job-orchestrator"
 edit-url-template = "https://github.com/rvhonorato/job-orchestrator/edit/main/docs/{path}"

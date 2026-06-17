@@ -81,6 +81,11 @@ spec:
                 configMapKeyRef:
                   name: job-orchestrator-config
                   key: SERVICE_EXAMPLE_RUNS_PER_USER
+            - name: SERVICE_EXAMPLE_MAX_RUNS
+              valueFrom:
+                configMapKeyRef:
+                  name: job-orchestrator-config
+                  key: SERVICE_EXAMPLE_MAX_RUNS
           ports:
             - containerPort: 5000
               name: http

@@ -64,20 +64,21 @@ open coverage/tarpaulin-report.html
 
 ## Test Structure
 
-Tests are organized alongside the code they test:
+Tests are inline `#[cfg(test)]` modules within the same file as the code they test:
 
 ```
 src/
-├── lib.rs
-├── orchestrator/
-│   ├── mod.rs
-│   └── tests.rs      # Orchestrator tests
-├── client/
-│   ├── mod.rs
-│   └── tests.rs      # Client tests
-└── utils/
-    └── mod.rs        # Inline tests with #[cfg(test)]
+├── config/loader.rs          # Config loading and env var tests
+├── controllers/server.rs     # Upload, download, terminate handler tests
+├── controllers/client.rs     # Submit, retrieve, kill handler tests
+├── models/status_dto.rs      # Status serialization tests
+├── models/queue_dto.rs       # Quota and round-robin scheduling tests
+├── services/server.rs        # Sender, getter, cleaner task tests
+├── services/client.rs        # Runner, updater, cleaner task tests
+└── utils/io.rs               # Script validator, file I/O tests
 ```
+
+There is no separate `tests/` directory — this is a binary crate with no public library interface.
 
 ## Writing Tests
 
@@ -110,22 +111,6 @@ mod tests {
         let result = async_function().await;
         assert!(result.is_ok());
     }
-}
-```
-
-### Integration Tests
-
-Create files in `tests/` directory:
-
-```rust
-// tests/integration_test.rs
-use job_orchestrator::*;
-
-#[tokio::test]
-async fn test_full_workflow() {
-    // Setup
-    // Test
-    // Verify
 }
 ```
 
@@ -163,14 +148,16 @@ use mockito::Server;
 
 #[tokio::test]
 async fn test_http_client() {
-    let mut server = Server::new();
-    let mock = server.mock("GET", "/health")
+    let mut server = Server::new_async().await;
+    let mock = server
+        .mock("GET", "/health")
         .with_status(200)
-        .create();
+        .create_async()
+        .await;
 
     // Test against server.url()
 
-    mock.assert();
+    mock.assert_async().await;
 }
 ```
 
@@ -184,13 +171,10 @@ Create reusable test data:
 #[cfg(test)]
 mod test_utils {
     pub fn create_test_job() -> Job {
-        Job {
-            id: 1,
-            user_id: 1,
-            service: "test".to_string(),
-            status: Status::Queued,
-            ..Default::default()
-        }
+        let mut job = Job::new("/tmp/test-data");
+        job.set_user_id(1);
+        job.set_service("test".to_string());
+        job
     }
 }
 ```
@@ -215,18 +199,11 @@ fn test_file_operations() {
 
 ## CI Testing
 
-Tests run automatically on GitHub Actions:
+Tests run automatically on GitHub Actions (`.github/workflows/ci.yml`) with three jobs:
 
-```yaml
-# .github/workflows/ci.yml
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test
-```
+- **test** — `cargo test`
+- **clippy** — `cargo clippy -- -D warnings`
+- **coverage** — `cargo tarpaulin --out Xml`, uploaded to Codacy
 
 ## Linting
 

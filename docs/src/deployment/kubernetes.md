@@ -41,14 +41,18 @@ curl $URL/download/1
 
 ## Security Hardening
 
-Apply the same container hardening principles at the pod level:
+The manifests in `kubernetes/` already apply the following hardening measures:
 
-- Use `securityContext` to run as non-root
-- Set `readOnlyRootFilesystem: true`
-- Drop capabilities with `capabilities.drop: ["ALL"]`
-- Set resource limits (CPU, memory, PIDs) via `resources.limits`
-- Use `NetworkPolicy` to restrict traffic between pods
-- Apply Pod Security Standards (restricted profile)
+| Measure | Implemented |
+|---------|-------------|
+| Run as non-root (`runAsUser: 1000`, `runAsNonRoot: true`) | Both server and client |
+| Read-only root filesystem | Both server and client |
+| Drop all capabilities | Both server and client |
+| Seccomp profile (`RuntimeDefault`) | Both server and client |
+| CPU and memory resource limits | Both server and client |
+| NetworkPolicy restricting client ingress/egress to server only | Client |
+
+**PID limits**: Kubernetes does not expose PID limits directly in `resources.limits`. To enforce them, add a `LimitRange` object with `type: Container` and a `max.pid` entry, or configure cgroup v2 PID limits at the node level.
 
 ## See Also
 

@@ -50,8 +50,8 @@ impl Config {
                             upload_url: String::new(),
                             download_url: String::new(),
                             terminate_url: String::new(),
-                            runs_per_user: 5, // by default consider 5 runs per user per service
-                            max_runs: 1,      // by default run only 1 payload at a time
+                            runs_per_user: 5,  // by default consider 5 runs per user per service
+                            max_runs: 10,      // by default allow 10 concurrent payloads per service
                         });
 
                     // Assign the corresponding vars to the config

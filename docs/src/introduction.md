@@ -2,20 +2,15 @@
 
 **job-orchestrator** is an asynchronous job orchestration system for managing and distributing computational workloads across heterogeneous computing resources with intelligent quota-based load balancing.
 
-## What is job-orchestrator?
+It serves as a middleware layer that connects web applications to computing resources: users submit files and a `run.sh` script via a REST API; the server queues and routes jobs to client nodes that execute them; results are returned as a ZIP archive.
 
-job-orchestrator is a central component of [WeNMR](https://wenmr.science.uu.nl), a worldwide e-Infrastructure for structural biology operated by the [BonvinLab](https://bonvinlab.org) at [Utrecht University](https://uu.nl). It serves as a reactive middleware layer that connects web applications to diverse computing resources, enabling efficient job distribution for scientific computing workflows.
+job-orchestrator is a central component of [WeNMR](https://wenmr.science.uu.nl), a worldwide e-Infrastructure for structural biology operated by the [BonvinLab](https://bonvinlab.org) at [Utrecht University](https://uu.nl).
 
 ## Key Features
 
 - **Asynchronous Job Management**: Built with Rust and Tokio for high-performance async operations
 - **Quota-Based Load Balancing**: Per-user, per-service quotas prevent resource exhaustion
 - **Dual-Mode Architecture**: Runs as server (job orchestration) or client (job execution)
-- **Multiple Backend Support**: Extensible to integrate with various computing resources:
-  - Native client mode for local job execution
-  - [DIRAC Interware](https://dirac.readthedocs.io/en/latest/index.html) *(planned)*
-  - SLURM clusters *(planned)*
-  - Educational cloud services *(planned)*
 - **RESTful API**: Simple HTTP interface for job submission, retrieval, and cancellation
 - **Automatic Cleanup**: Configurable retention policies for completed jobs
 - **Job Termination**: Cancel running jobs via API endpoints
@@ -29,6 +24,12 @@ job-orchestrator is designed for scenarios requiring:
 - **Heterogeneous Computing**: Route jobs to appropriate backends (local, HPC, cloud)
 - **Web-Based Science Platforms**: Decouple frontend from compute infrastructure
 - **Batch Processing**: Handle high-throughput job submissions with automatic queuing
+
+## Get Started
+
+- [Quick Start](./getting-started/quick-start.md) — up and running with Docker Compose in minutes
+- [Your First Job](./getting-started/first-job.md) — submit and retrieve a job
+- [Architecture Overview](./architecture/overview.md) — understand how the system works
 
 ## Project Status
 
@@ -51,3 +52,7 @@ job-orchestrator is designed for scenarios requiring:
 ## License
 
 MIT License - see [LICENSE](https://github.com/rvhonorato/job-orchestrator/blob/main/LICENSE) for details.
+
+---
+
+*Parts of this documentation were automatically generated with the assistance of AI tools and human reviewed for accuracy.*
