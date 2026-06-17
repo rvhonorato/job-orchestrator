@@ -90,7 +90,7 @@ To inspect the current state of a job regardless of completion status
 ```bash
 # Get current state of job even if incomplete
 curl -o partial_results.zip http://localhost:5000/download_partial/1
-````
+```
 
 Extract and view:
 
@@ -231,7 +231,7 @@ per-user quotas and track resource usage.
 
 ### Job Retention
 
-Completed jobs are automatically cleaned up after the configured retention period (default: 48 hours). Make sure to download your results before they expire.
+Completed jobs are automatically cleaned up after the configured retention period (default: 10 days). Make sure to download your results before they expire.
 
 ## Next Steps
 

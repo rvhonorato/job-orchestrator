@@ -40,7 +40,7 @@ docker build -t job-orchestrator .
 
 ### For Building from Source
 
-- **Rust**: 1.75 or later (edition 2021)
+- **Rust**: 1.85 or later (edition 2024)
 - **SQLite**: Development libraries
 
 On Debian/Ubuntu:

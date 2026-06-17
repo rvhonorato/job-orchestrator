@@ -102,11 +102,6 @@ sandbox. It can be bypassed by determined actors. Input scripts
 are still expected to come from trusted or semi-trusted sources.
 True isolation must be enforced at the deployment level.
 
-**Important**: The script validator is a sanity check, not a
-sandbox. It can be bypassed by determined actors. Input scripts
-are still expected to come from trusted or semi-trusted sources.
-True isolation must be enforced at the deployment level.
-
 ## Path Traversal Protection
 
 All zip file operations include path traversal protection to prevent

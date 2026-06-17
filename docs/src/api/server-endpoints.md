@@ -13,7 +13,7 @@ http://localhost:5000
 Swagger UI is available at:
 
 ```
-http://localhost:5000/swagger-ui/
+http://localhost:5000/swagger
 ```
 
 ## Endpoints
@@ -66,6 +66,59 @@ curl -X POST http://localhost:5000/upload \
 - At least one file must be named `run.sh`
 - The `service` must match a configured service on the server
 - `dest_id` is populated after the job is dispatched to a client
+
+---
+
+### GET /download/{id}
+
+Get job status or download completed results.
+
+**Parameters**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | integer | Job ID from upload response |
+
+**Example**
+
+```bash
+# Check status (returns JSON when not completed)
+curl http://localhost:5000/download/1
+
+# Download results (returns ZIP when completed)
+curl -o results.zip http://localhost:5000/download/1
+```
+
+**Response**
+
+When the job is **not yet completed**, returns JSON:
+
+```json
+{
+  "id": 1,
+  "status": "Running",
+  "message": ""
+}
+```
+
+When the job is **completed**, returns:
+
+- Content-Type: `application/zip`
+- Body: ZIP archive of all output files
+
+**Status Codes**
+
+| Code | Description |
+|------|-------------|
+| `200` | JSON job status or ZIP file (check `Content-Type`) |
+| `404` | Job not found |
+| `500` | Server error |
+
+**Notes**
+
+- The same endpoint returns JSON or ZIP depending on job state
+- Poll until `status` is `Completed`, then the next call returns the ZIP
+- All files present in the job directory after `run.sh` finishes are included
 
 ---
 
@@ -132,14 +185,14 @@ Cancel a running job.
 
 **Parameters**
 
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | integer | Job ID to terminate |
+
 **Example**
 
 ```bash
-# Check status (returns JSON when not completed)
-curl http://localhost:5000/download/1
-
-# Download results (returns ZIP when completed)
-curl -o results.zip http://localhost:5000/download/1
+curl -X POST http://localhost:5000/terminate/1
 ```
 
 **Response**
@@ -224,7 +277,7 @@ Simple acknowledgment that the server is running.
 
 ---
 
-### GET /swagger-ui/
+### GET /swagger
 
 Interactive API documentation.
 
@@ -233,7 +286,7 @@ Interactive API documentation.
 Open in browser:
 
 ```
-http://localhost:5000/swagger-ui/
+http://localhost:5000/swagger
 ```
 
 Provides:

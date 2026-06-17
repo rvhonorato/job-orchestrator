@@ -122,7 +122,7 @@ Jobs waiting due to quota exhaustion remain in `Queued` status:
 
 ```bash
 # Check how many jobs are queued vs running
-curl http://localhost:5000/swagger-ui/  # Use API explorer
+curl http://localhost:5000/swagger  # Use API explorer
 ```
 
 ### Server Logs

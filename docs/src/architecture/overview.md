@@ -23,6 +23,8 @@ flowchart TB
         ClientDB[("SQLite<br>In-Memory")]
         ClientFS[/"Working Dir"/]
         Runner["Runner Task<br>500ms"]
+        Updater["Updater Task<br>500ms"]
+        ClientCleaner["Cleaner Task<br>60s"]
         Executor["Bash Executor<br>run.sh"]
   end
     User(["User/Web App"]) -- POST /upload --> API
@@ -77,6 +79,8 @@ Each client node handles:
 | Task | Interval | Purpose |
 |------|----------|---------|
 | **Runner** | 500ms | Executes prepared payloads, captures results |
+| **Updater** | 500ms | Monitors running processes, handles exit codes and killed payloads |
+| **Cleaner** | 60s | Removes completed payload directories from disk |
 
 ## Data Flow
 
@@ -98,40 +102,3 @@ Each client node handles:
 5. **Server** detects status change, updates job to `Killed`
 6. **Server** returns termination confirmation to user
 
-## Auto-Scaling Architecture (Planned)
-
-The orchestrator will support automatic scaling of client instances based on workload:
-
-```mermaid
----
-config:
-  layout: dagre
----
-flowchart TB
- subgraph Server["Orchestrator Server"]
-        API["REST API"]
-        Queue["Queue Manager"]
-        AutoScaler["Auto-Scaler"]
-        ServicePool["Service Pool"]
-  end
- subgraph Cloud["Cloud Provider"]
-        CloudAPI["Cloud API"]
-  end
- subgraph Clients["Client Instances"]
-        Dynamic["Dynamic Clients<br>Auto-created"]
-        Static["Static Client<br>"]
-  end
-    User(["User/Web App"]) -- Submits/Retrieves --> API
-    API --> Queue
-    Queue -- Distribute jobs --> Clients
-    ServicePool <-- Monitors --> Queue
-    AutoScaler <-- Register/Trigger --> ServicePool
-    AutoScaler -- Scale Up/Down --> CloudAPI
-    CloudAPI -- Create/Terminate --> Clients
-```
-
-This feature will enable:
-
-- Dynamic creation of cloud-based client instances during high demand
-- Automatic termination of idle instances to reduce costs
-- Load-aware job distribution across available clients

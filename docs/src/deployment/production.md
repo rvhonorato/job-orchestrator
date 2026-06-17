@@ -171,7 +171,7 @@ server {
     }
 
     # Block swagger in production (optional)
-    location /swagger-ui {
+    location /swagger {
         deny all;
     }
 }

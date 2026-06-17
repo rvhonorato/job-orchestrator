@@ -34,12 +34,6 @@ The server is the central orchestrator that:
 ### Starting the Server
 
 ```bash
-job-orchestrator server --port 5000
-```
-
-Or with environment variables:
-
-```bash
 PORT=5000 job-orchestrator server
 ```
 
@@ -62,7 +56,7 @@ PORT=5000 job-orchestrator server
 | `/download/:id` | GET | Get results or status |
 | `/terminate/:id` | POST | Cancel a running job |
 | `/health` | GET | Health check |
-| `/swagger-ui/` | GET | API documentation |
+| `/swagger` | GET | API documentation |
 
 ## Client Mode
 
@@ -74,12 +68,6 @@ The client executes jobs on behalf of the server:
 - Reports system load for scheduling decisions
 
 ### Starting the Client
-
-```bash
-job-orchestrator client --port 9000
-```
-
-Or with environment variables:
 
 ```bash
 PORT=9000 job-orchestrator client
@@ -139,10 +127,10 @@ Both server and client on the same machine:
 
 ```bash
 # Terminal 1
-job-orchestrator server --port 5000
+PORT=5000 job-orchestrator server
 
 # Terminal 2
-job-orchestrator client --port 9000
+PORT=9000 job-orchestrator client
 ```
 
 ### Distributed (Production)

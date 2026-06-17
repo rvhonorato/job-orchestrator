@@ -34,8 +34,6 @@ docker build -t job-orchestrator .
 ### Basic Setup
 
 ```yaml
-version: '3.8'
-
 services:
   server:
     image: ghcr.io/rvhonorato/job-orchestrator:latest
@@ -46,7 +44,7 @@ services:
       PORT: 5000
       DB_PATH: /opt/data/db.sqlite
       DATA_PATH: /opt/data
-      MAX_AGE: 172800
+      MAX_AGE: 864000
       SERVICE_EXAMPLE_UPLOAD_URL: http://client:9000/submit
       SERVICE_EXAMPLE_DOWNLOAD_URL: http://client:9000/retrieve
       SERVICE_EXAMPLE_TERMINATE_URL: http://client:9000/kill

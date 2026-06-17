@@ -203,4 +203,4 @@ If the server cannot retrieve results:
 | Queued to Processing | Up to 500ms (+ quota wait) |
 | Processing to Submitted | Depends on file size and network |
 | Submitted to Completed | Depends on job execution time |
-| Completed to Cleaned | Configured via `MAX_AGE` (default: 48 hours) |
+| Completed to Cleaned | Configured via `MAX_AGE` (default: 10 days) |

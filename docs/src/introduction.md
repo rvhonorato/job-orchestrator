@@ -36,7 +36,6 @@ job-orchestrator is designed for scenarios requiring:
 
 **Planned Features**:
 
-- **Auto-Scaling**: Dynamic creation and termination of cloud-based client instances based on workload
 - DIRAC Interware integration
 - SLURM direct integration
 - Enhanced monitoring and metrics
@@ -45,7 +44,7 @@ job-orchestrator is designed for scenarios requiring:
 
 ## Getting Help
 
-- **API Documentation**: Available via Swagger UI at `/swagger-ui/` when running
+- **API Documentation**: Available via Swagger UI at `/swagger` when running
 - **Issues**: [GitHub Issues](https://github.com/rvhonorato/job-orchestrator/issues)
 - **Email**: Rodrigo V. Honorato <rvhonorato@protonmail.com>
 

@@ -11,7 +11,7 @@ The orchestrator server is configured primarily through environment variables.
 | `PORT` | `5000` | HTTP port the server listens on |
 | `DB_PATH` | `./db.sqlite` | Path to SQLite database file |
 | `DATA_PATH` | `./data` | Directory for job file storage |
-| `MAX_AGE` | `172800` | Job retention time in seconds (default: 48 hours) |
+| `MAX_AGE` | `864000` | Job retention time in seconds (default: 10 days) |
 
 ### Service Configuration
 
@@ -23,6 +23,7 @@ For each service you want to support, configure these variables:
 | `SERVICE_<NAME>_DOWNLOAD_URL` | Client endpoint for retrieving results |
 | `SERVICE_<NAME>_TERMINATE_URL` | Client endpoint for terminating jobs |
 | `SERVICE_<NAME>_RUNS_PER_USER` | Maximum concurrent jobs per user (default: 5) |
+| `SERVICE_<NAME>_MAX_RUNS` | Maximum payloads the client runs simultaneously (default: 1) |
 
 **Note**: `<NAME>` must be uppercase. For a service called "example", use `SERVICE_EXAMPLE_*`.
 
@@ -46,7 +47,7 @@ export SERVICE_EXAMPLE_TERMINATE_URL=http://localhost:9000/kill
 export PORT=5000
 export DB_PATH=/opt/orchestrator/db.sqlite
 export DATA_PATH=/opt/orchestrator/data
-export MAX_AGE=172800  # 48 hours
+export MAX_AGE=864000  # 10 days
 
 # Example service (general purpose)
 export SERVICE_EXAMPLE_UPLOAD_URL=http://compute-1:9000/submit
@@ -74,11 +75,12 @@ services:
       PORT: 5000
       DB_PATH: /opt/data/db.sqlite
       DATA_PATH: /opt/data
-      MAX_AGE: 172800
+      MAX_AGE: 864000
       SERVICE_EXAMPLE_UPLOAD_URL: http://client:9000/submit
       SERVICE_EXAMPLE_DOWNLOAD_URL: http://client:9000/retrieve
       SERVICE_EXAMPLE_TERMINATE_URL: http://client:9000/kill
       SERVICE_EXAMPLE_RUNS_PER_USER: 5
+      SERVICE_EXAMPLE_MAX_RUNS: 1
     volumes:
       - server-data:/opt/data
 
@@ -136,11 +138,12 @@ How long to keep completed jobs before cleanup, in seconds.
 |-------|----------|
 | `3600` | 1 hour |
 | `86400` | 24 hours |
-| `172800` | 48 hours (default) |
+| `172800` | 48 hours |
 | `604800` | 1 week |
+| `864000` | 10 days (default) |
 
 ```bash
-MAX_AGE=172800
+MAX_AGE=864000
 ```
 
 Jobs older than this are removed by the Cleaner task.

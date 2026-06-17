@@ -89,17 +89,17 @@ cargo check
 
 ```bash
 # Server mode
-cargo run -- server --port 5000
+PORT=5000 cargo run -- server
 
 # Client mode
-cargo run -- client --port 9000
+PORT=9000 cargo run -- client
 ```
 
 ### From Binary
 
 ```bash
 # After release build
-./target/release/job-orchestrator server --port 5000
+PORT=5000 ./target/release/job-orchestrator server
 ```
 
 ## Build Options
