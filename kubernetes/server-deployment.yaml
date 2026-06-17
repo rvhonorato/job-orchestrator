@@ -1,0 +1,122 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: job-orchestrator-server
+  labels:
+    app: job-orchestrator
+    component: server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: job-orchestrator
+      component: server
+  template:
+    metadata:
+      labels:
+        app: job-orchestrator
+        component: server
+      annotations:
+        # Prevent rolling updates from evicting pods unnecessarily
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: server
+          image: job-orchestrator-server:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/job-orchestrator", "server"]
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          envFrom:
+            - configMapRef:
+                name: job-orchestrator-config
+          env:
+            - name: DATA_PATH
+              valueFrom:
+                configMapKeyRef:
+                  name: job-orchestrator-config
+                  key: SERVER_DATA_PATH
+            - name: DB_PATH
+              valueFrom:
+                configMapKeyRef:
+                  name: job-orchestrator-config
+                  key: SERVER_DB_PATH
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: job-orchestrator-config
+                  key: SERVER_PORT
+            - name: MAX_AGE
+              valueFrom:
+                configMapKeyRef:
+                  name: job-orchestrator-config
+                  key: SERVER_MAX_AGE
+            - name: SERVICE_EXAMPLE_UPLOAD_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: job-orchestrator-config
+                  key: SERVICE_EXAMPLE_UPLOAD_URL
+            - name: SERVICE_EXAMPLE_DOWNLOAD_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: job-orchestrator-config
+                  key: SERVICE_EXAMPLE_DOWNLOAD_URL
+            - name: SERVICE_EXAMPLE_TERMINATE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: job-orchestrator-config
+                  key: SERVICE_EXAMPLE_TERMINATE_URL
+            - name: SERVICE_EXAMPLE_RUNS_PER_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: job-orchestrator-config
+                  key: SERVICE_EXAMPLE_RUNS_PER_USER
+          ports:
+            - containerPort: 5000
+              name: http
+              protocol: TCP
+          volumeMounts:
+            - name: server-data
+              mountPath: /opt/data
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: server-data
+          persistentVolumeClaim:
+            claimName: job-orchestrator-server-data
+        - name: tmp
+          emptyDir: {}
+      dnsPolicy: ClusterFirst

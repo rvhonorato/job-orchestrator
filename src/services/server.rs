@@ -132,7 +132,10 @@ pub async fn getter(pool: SqlitePool, config: Config) {
     let mut queue = Queue::new(&config);
 
     if let Err(e) = queue
-        .list_per_status(vec![Status::Submitted, Status::Running], &pool)
+        .list_per_status(
+            vec![Status::Submitted, Status::Prepared, Status::Running],
+            &pool,
+        )
         .await
     {
         error!("Failed to fetch submitted jobs: {:?}", e);

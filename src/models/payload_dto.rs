@@ -106,6 +106,26 @@ impl Payload {
 
         Ok(payload)
     }
+
+    pub async fn retrieve_by_loc(loc: String, pool: &SqlitePool) -> Result<Payload, sqlx::Error> {
+        let row = sqlx::query("SELECT * FROM payloads WHERE loc = ?")
+            .bind(loc)
+            .fetch_optional(pool)
+            .await?
+            .ok_or(sqlx::Error::RowNotFound)?;
+
+        let status: String = row.get("status");
+        let loc: Option<String> = row.get("loc");
+
+        let mut payload = Payload::new();
+        payload.id = row.get("id");
+        payload.status = Status::from_string(&status);
+        payload.loc = loc.map(PathBuf::from).unwrap_or_default();
+        payload.pid = row.get("pid");
+        payload.killed = row.get("killed");
+
+        Ok(payload)
+    }
 }
 
 #[cfg(test)]

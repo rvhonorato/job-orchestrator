@@ -150,7 +150,7 @@ curl -o partial_results.zip http://localhost:5000/download_partial/1
 **Status Codes**
 
 | Code | Description |
-|------|----|
+|------|-------------|
 | `200` | ZIP file with current job state |
 | `404` | Job not found |
 | `500` | Server error |

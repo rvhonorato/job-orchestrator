@@ -35,8 +35,10 @@ WORKDIR /opt/gdock
 RUN cargo build --release
 
 #===============================================================================
-# Runtime base - includes bash (required for client mode to
-#  execute run.sh scripts) and the job-orchestrator binary.
+# Runtime base
+#  includes:
+#  - bash (required for client mode to execute run.sh scripts) and the job-orchestrator binary.
+#  - sqlite3 for debugging/manual intervention
 #
 #  This is the image published to ghcr.io; it can be used as
 #  either server or client:
@@ -47,7 +49,7 @@ FROM alpine:3.23.3 AS runtime
 # TODO: Run as non-root user for production hardening. Requires migrating
 # existing volume ownership first (see README Security section).
 #   addgroup -S appgroup && adduser -S appuser -G appgroup -u 10001
-RUN apk add --no-cache bash
+RUN apk add --no-cache bash sqlite
 
 COPY --from=build /opt/target/release/job-orchestrator /job-orchestrator
 
