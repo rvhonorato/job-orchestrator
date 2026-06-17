@@ -160,8 +160,8 @@ http {
         listen 443 ssl http2;
         server_name jobs.example.com;
 
-    ssl_certificate /etc/nginx/certs/cert.pem;
-    ssl_certificate_key /etc/nginx/certs/key.pem;
+        ssl_certificate /etc/nginx/certs/cert.pem;
+        ssl_certificate_key /etc/nginx/certs/key.pem;
 
         location /upload {
             limit_req zone=upload burst=20 nodelay;

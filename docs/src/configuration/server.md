@@ -23,7 +23,7 @@ For each service you want to support, configure these variables:
 | `SERVICE_<NAME>_DOWNLOAD_URL` | Client endpoint for retrieving results |
 | `SERVICE_<NAME>_TERMINATE_URL` | Client endpoint for terminating jobs |
 | `SERVICE_<NAME>_RUNS_PER_USER` | Maximum concurrent jobs per user (default: 5) |
-| `SERVICE_<NAME>_MAX_RUNS` | Maximum payloads the client runs simultaneously (default: 1) |
+| `SERVICE_<NAME>_MAX_RUNS` | Maximum payloads the client runs simultaneously (default: 10) |
 
 **Note**: `<NAME>` must be uppercase. For a service called "example", use `SERVICE_EXAMPLE_*`.
 
@@ -80,7 +80,7 @@ services:
       SERVICE_EXAMPLE_DOWNLOAD_URL: http://client:9000/retrieve
       SERVICE_EXAMPLE_TERMINATE_URL: http://client:9000/kill
       SERVICE_EXAMPLE_RUNS_PER_USER: 5
-      SERVICE_EXAMPLE_MAX_RUNS: 1
+      SERVICE_EXAMPLE_MAX_RUNS: 10
     volumes:
       - server-data:/opt/data
 
