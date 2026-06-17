@@ -33,14 +33,15 @@ docker pull ghcr.io/rvhonorato/job-orchestrator:latest
 Or build locally:
 
 ```bash
-docker build -t job-orchestrator .
+docker build --target server -t job-orchestrator-server .
+docker build --target client -t job-orchestrator-client .
 ```
 
 ## Prerequisites
 
 ### For Building from Source
 
-- **Rust**: 1.75 or later (edition 2021)
+- **Rust**: 1.85 or later (edition 2024)
 - **SQLite**: Development libraries
 
 On Debian/Ubuntu:

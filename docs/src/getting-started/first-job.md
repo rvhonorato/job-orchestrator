@@ -72,7 +72,7 @@ If the job is not yet completed, you'll get a JSON response:
 }
 ```
 
-The `status` field will be one of: `Queued`, `Processing`, `Submitted`, `Running`, `Completed`, `Failed`, `Invalid`, `Cleaned`, `Unknown`, `Locked`, or `Killed`.
+The `status` field will be one of: `Queued`, `Processing`, `Submitted`, `Running`, `Completed`, `Failed`, `Invalid`, `Cleaned`, `Unknown`, `Locked`, or `Killed`. See [Job States](../architecture/job-lifecycle.md#job-states) for descriptions of each.
 
 ## Downloading Results
 
@@ -90,7 +90,7 @@ To inspect the current state of a job regardless of completion status
 ```bash
 # Get current state of job even if incomplete
 curl -o partial_results.zip http://localhost:5000/download_partial/1
-````
+```
 
 Extract and view:
 
@@ -120,46 +120,18 @@ Response on success:
 ```json
 {
   "id": 1,
-  "status": "Killed",
+  "status": "Unknown",
   "message": "job terminated"
 }
 ```
 
+> The `status` field in the terminate response is not meaningful. Use `GET /download/{id}` to confirm the job's actual status after termination.
+
 **Notes:**
-- Only jobs in `Running`, `Submitted`, or `Queued` status can be terminated
+- Jobs in `Submitted` or `Running` status can be terminated
 - Terminated jobs will have status `Killed`
 - The server sends a termination request to the client, which kills the process
 - If the job has already completed, termination will fail with a 500 error
-
-## A More Complex Example
-
-Here's a job that processes an input file:
-
-```bash
-# Create an input file
-echo "sample data" > input.txt
-
-# Create a processing script
-cat > run.sh << 'EOF'
-#!/bin/bash
-# Required: Capture exit code for the orchestrator client
-trap 'echo "$?" > .orchestrator.exit' EXIT
-
-# Count lines and words in input
-wc input.txt > stats.txt
-# Transform the data
-tr 'a-z' 'A-Z' < input.txt > output.txt
-echo "Done!" >> output.txt
-EOF
-chmod +x run.sh
-
-# Submit with multiple files
-curl -X POST http://localhost:5000/upload \
-  -F "file=@run.sh" \
-  -F "file=@input.txt" \
-  -F "user_id=1" \
-  -F "service=example"
-```
 
 ## Security
 
@@ -208,13 +180,6 @@ This ensures that when your `run.sh` exits, it writes the exit code to `.orchest
 
 The default maximum upload size is 400MB. This can be configured on the server.
 
-### Path Traversal Protection
-
-The system includes built-in protection against path traversal attacks during
-zip file operations. Maliciously crafted files with paths like `../../etc/passwd`
-are automatically rejected. This protection applies to both job submission
-and result retrieval operations.
-
 ### User ID Parameter
 
 Jobs can be submitted with a `user_id` for quota management:
@@ -226,12 +191,11 @@ curl -X POST http://localhost:5000/upload \
   -F "service=example"
 ```
 
-If omitted, `user_id` defaults to 0. This allows the orchestrator to enforce
-per-user quotas and track resource usage.
+`user_id` is required — the server returns `400` if it is missing. This allows the orchestrator to enforce per-user quotas and track resource usage.
 
 ### Job Retention
 
-Completed jobs are automatically cleaned up after the configured retention period (default: 48 hours). Make sure to download your results before they expire.
+Completed jobs are automatically cleaned up after the configured retention period (default: 10 days). Make sure to download your results before they expire.
 
 ## Next Steps
 

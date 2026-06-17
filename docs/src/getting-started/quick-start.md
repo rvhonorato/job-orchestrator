@@ -12,8 +12,8 @@ docker compose up --build
 
 This starts:
 
-- **Orchestrator server** on port 5000
-- **Example client** on port 9000
+- **Orchestrator server** on port 5000 (exposed to host)
+- **Example client** on an internal network (not exposed to host)
 
 ## Verify It's Running
 
@@ -30,7 +30,7 @@ You should receive a health status response.
 Open your browser and navigate to:
 
 ```
-http://localhost:5000/swagger-ui/
+http://localhost:5000/swagger
 ```
 
 This provides interactive API documentation where you can explore and test all endpoints.

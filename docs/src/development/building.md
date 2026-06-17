@@ -12,7 +12,7 @@ Install Rust via rustup:
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-Minimum version: Rust 1.75 (edition 2021)
+Minimum version: Rust 1.85 (edition 2024)
 
 Verify installation:
 
@@ -89,17 +89,17 @@ cargo check
 
 ```bash
 # Server mode
-cargo run -- server --port 5000
+PORT=5000 cargo run -- server
 
 # Client mode
-cargo run -- client --port 9000
+PORT=9000 cargo run -- client
 ```
 
 ### From Binary
 
 ```bash
 # After release build
-./target/release/job-orchestrator server --port 5000
+PORT=5000 ./target/release/job-orchestrator server
 ```
 
 ## Build Options
@@ -133,15 +133,22 @@ Common targets:
 ### Using Dockerfile
 
 ```bash
-docker build -t job-orchestrator .
+# Build server image
+docker build --target server -t job-orchestrator-server .
+
+# Build client image (includes the example application)
+docker build --target client -t job-orchestrator-client .
 ```
 
 ### Multi-stage Build
 
 The Dockerfile uses multi-stage builds for smaller images:
 
-1. **Builder stage**: Compiles with full toolchain
-2. **Runtime stage**: Minimal image with just the binary
+1. **build**: Compiles the `job-orchestrator` binary with the full Rust toolchain
+2. **application**: Builds the example application (`gdock`) from source
+3. **runtime**: Minimal Alpine image with the binary, bash, and sqlite
+4. **server**: Extends `runtime` — no application needed
+5. **client**: Extends `runtime` with the application binary from the `application` stage
 
 ## See Also
 

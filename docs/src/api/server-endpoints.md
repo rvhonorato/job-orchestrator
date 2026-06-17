@@ -13,7 +13,7 @@ http://localhost:5000
 Swagger UI is available at:
 
 ```
-http://localhost:5000/swagger-ui/
+http://localhost:5000/swagger
 ```
 
 ## Endpoints
@@ -30,7 +30,7 @@ Submit a new job for processing.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `file` | file | Yes | One or more files (repeat for multiple) |
-| `user_id` | integer | No | User identifier for quota tracking (default: 0) |
+| `user_id` | integer | Yes | User identifier for quota tracking |
 | `service` | string | Yes | Service name (must be configured on server) |
 
 **Example**
@@ -63,9 +63,78 @@ curl -X POST http://localhost:5000/upload \
 
 **Notes**
 
-- At least one file must be named `run.sh`
 - The `service` must match a configured service on the server
+- The entry point script must be named exactly `run.sh` (hardcoded); it is not validated at upload time — a missing or invalid script results in `Invalid` status when the client tries to execute it
 - `dest_id` is populated after the job is dispatched to a client
+
+---
+
+### GET /download/{id}
+
+Get job status or download completed results.
+
+**Parameters**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | integer | Job ID from upload response |
+
+**Example**
+
+```bash
+# Check status (returns JSON when not completed)
+curl http://localhost:5000/download/1
+
+# Download results (returns ZIP when completed)
+curl -o results.zip http://localhost:5000/download/1
+```
+
+**Response**
+
+When the job is **not yet completed**, returns JSON:
+
+```json
+{
+  "id": 1,
+  "status": "Running",
+  "message": ""
+}
+```
+
+When the job is **completed**, returns:
+
+- Content-Type: `application/zip`
+- Body: ZIP archive of all output files
+
+**Status Codes**
+
+| Code | Description |
+|------|-------------|
+| `200` | JSON job status or ZIP file (check `Content-Type`) |
+| `404` | Job not found |
+| `500` | Server error |
+
+**Notes**
+
+- The same endpoint returns JSON or ZIP depending on job state — when the job is `Completed` the response is the ZIP directly
+- All files present in the job directory after `run.sh` finishes are included
+
+**Usage Pattern**
+
+```bash
+while true; do
+  response=$(curl -s http://localhost:5000/download/1)
+  status=$(echo "$response" | jq -r '.status // empty')
+  if [ -z "$status" ]; then
+    # No status field — response is the ZIP
+    curl -o results.zip http://localhost:5000/download/1
+    break
+  else
+    echo "Status: $status"
+    sleep 5
+  fi
+done
+```
 
 ---
 
@@ -85,7 +154,6 @@ the current workspace state as a ZIP file.
 **Example**
 
 ```bash
-# Download partial results for debugging
 curl -o partial_results.zip http://localhost:5000/download_partial/1
 ```
 
@@ -97,32 +165,11 @@ curl -o partial_results.zip http://localhost:5000/download_partial/1
 **Status Codes**
 
 | Code | Description |
-|------|----|
+|------|-------------|
 | `200` | ZIP file with current job state |
+| `400` | Job's service is not configured on the server |
 | `404` | Job not found |
 | `500` | Server error |
-
-**Usage Pattern**
-
-Poll until status is `Completed`, then save the ZIP:
-
-```bash
-while true; do
-  response=$(curl -s http://localhost:5000/download/1)
-  status=$(echo "$response" | jq -r '.status // empty')
-  if [ -z "$status" ]; then
-    # No JSON status field means we got the ZIP
-    curl -o results.zip http://localhost:5000/download/1
-    break
-  elif [ "$status" = "Completed" ]; then
-    curl -o results.zip http://localhost:5000/download/1
-    break
-  else
-    echo "Status: $status"
-    sleep 5
-  fi
-done
-```
 
 ---
 
@@ -132,14 +179,14 @@ Cancel a running job.
 
 **Parameters**
 
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | integer | Job ID to terminate |
+
 **Example**
 
 ```bash
-# Check status (returns JSON when not completed)
-curl http://localhost:5000/download/1
-
-# Download results (returns ZIP when completed)
-curl -o results.zip http://localhost:5000/download/1
+curl -X POST http://localhost:5000/terminate/1
 ```
 
 **Response**
@@ -149,7 +196,7 @@ On success:
 ```json
 {
   "id": 1,
-  "status": "Killed",
+  "status": "Unknown",
   "message": "job terminated"
 }
 ```
@@ -159,10 +206,12 @@ On failure:
 ```json
 {
   "id": 1,
-  "status": "Running",
+  "status": "Unknown",
   "message": "could not terminate job"
 }
 ```
+
+> The `status` field in the response reflects the in-memory default and is not meaningful here. Query `GET /download/{id}` to confirm the job's actual status after termination.
 
 **Status Codes**
 
@@ -224,7 +273,7 @@ Simple acknowledgment that the server is running.
 
 ---
 
-### GET /swagger-ui/
+### GET /swagger
 
 Interactive API documentation.
 
@@ -233,7 +282,7 @@ Interactive API documentation.
 Open in browser:
 
 ```
-http://localhost:5000/swagger-ui/
+http://localhost:5000/swagger
 ```
 
 Provides:

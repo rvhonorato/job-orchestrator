@@ -127,21 +127,11 @@ curl -X POST $URL/terminate/1
 - [Deployment](https://rvhonorato.me/job-orchestrator/deployment/kubernetes.html)
 
 **API Documentation**: Available via Swagger UI at
-`http://localhost:5000/swagger/` when running.
+`http://localhost:5000/swagger` when running.
 
 ## Security
 
-**Kubernetes Hardening:**
-
-Apply the same principles from the Security section at the Kubernetes level:
-
-- Use `securityContext` to run as non-root
-- Set `readOnlyRootFilesystem: true`
-- Drop capabilities with `capabilities.drop: ["ALL"]`
-- Set resource limits (CPU, memory, PIDs)
-- Use `NetworkPolicy` to restrict traffic
-- Mount volumes with `noexec` where possible
-- Use Pod Security Standards (restricted profile)
+### Script Execution
 
 The client component executes user-submitted `run.sh` scripts
 with the full privileges of the process. No filesystem isolation
@@ -156,12 +146,7 @@ sandbox. It can be bypassed by determined actors. Input scripts
 are still expected to come from trusted or semi-trusted sources.
 True isolation must be enforced at the deployment level.
 
-**Important**: The script validator is a sanity check, not a
-sandbox. It can be bypassed by determined actors. Input scripts
-are still expected to come from trusted or semi-trusted sources.
-True isolation must be enforced at the deployment level.
-
-## Path Traversal Protection
+### Path Traversal Protection
 
 All zip file operations include path traversal protection to prevent
 malicious archives from escaping the job directory. Files with paths
@@ -170,12 +155,14 @@ This protection applies to both job submission and result retrieval.
 
 **Recommended hardening when deploying:**
 
-- Use `securityContext` to run as non-root
-- Set `readOnlyRootFilesystem: true`
-- Drop capabilities with `capabilities.drop: ["ALL"]`
-- Set resource limits (CPU, memory, PIDs)
-- Use `NetworkPolicy` to restrict traffic
-- Mount volumes with `noexec` where possible
+- Run the client inside a container with resource limits
+  (CPU, memory, PIDs)
+- Use a read-only root filesystem (`--read-only`)
+- Drop all capabilities (`--cap-drop=ALL`)
+- Place the client on an internal network with no direct
+  external exposure
+- Block outbound network access from the client container
+- Do not run the container as root
 - Set a per-job timeout to prevent resource exhaustion
 
 ## Contributing

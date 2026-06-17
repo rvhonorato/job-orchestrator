@@ -26,7 +26,11 @@ docker pull ghcr.io/rvhonorato/job-orchestrator:latest
 ### Build Locally
 
 ```bash
-docker build -t job-orchestrator .
+# Build server image
+docker build --target server -t job-orchestrator-server .
+
+# Build client image
+docker build --target client -t job-orchestrator-client .
 ```
 
 ## Docker Compose
@@ -34,8 +38,6 @@ docker build -t job-orchestrator .
 ### Basic Setup
 
 ```yaml
-version: '3.8'
-
 services:
   server:
     image: ghcr.io/rvhonorato/job-orchestrator:latest
@@ -46,23 +48,26 @@ services:
       PORT: 5000
       DB_PATH: /opt/data/db.sqlite
       DATA_PATH: /opt/data
-      MAX_AGE: 172800
+      MAX_AGE: 864000
       SERVICE_EXAMPLE_UPLOAD_URL: http://client:9000/submit
       SERVICE_EXAMPLE_DOWNLOAD_URL: http://client:9000/retrieve
       SERVICE_EXAMPLE_TERMINATE_URL: http://client:9000/kill
       SERVICE_EXAMPLE_RUNS_PER_USER: 5
+      SERVICE_EXAMPLE_MAX_RUNS: 10
     volumes:
       - server-data:/opt/data
-    depends_on:
-      - client
 
   client:
     image: ghcr.io/rvhonorato/job-orchestrator:latest
     command: client
     environment:
       PORT: 9000
+      DATA_PATH: /opt/data
+      DB_PATH: /opt/data/db.sqlite
     volumes:
       - client-data:/opt/data
+    depends_on:
+      - server
 
 volumes:
   server-data:
@@ -136,8 +141,6 @@ services:
   client-heavy:
     image: ghcr.io/rvhonorato/job-orchestrator:latest
     command: client
-    ports:
-      - "9001:9000"
     deploy:
       resources:
         limits:
