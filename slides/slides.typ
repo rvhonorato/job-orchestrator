@@ -142,7 +142,7 @@
     ]
     #v(5pt)
     #set text(size: 16pt)
-    - REST API (`/upload`, `/status`, `/download`)
+    - REST API (`/upload`, `/download/{id}`, `/terminate/{id}`)
     - Quota enforcement & job routing
     - Persistent SQLite (job metadata)
     - Background: *sender* + *getter*
@@ -156,7 +156,7 @@
     #set text(size: 16pt)
     - Receives job payloads from server
     - Executes `run.sh` in isolated dirs
-    - In-memory SQLite (transient state)
+    - Ephemeral SQLite (transient state)
     - Background: *runner* + *updater* 
     - Returns results + exit codes
   ],
@@ -303,7 +303,7 @@
 // JOB LIFECYCLE
 // ===========================================================================
 #pagebreak()
-= Job Lifecycle 
+= Job Lifecycle — 12-State Machine
 
 #text(fill: comment, size: 16pt)[
   Jobs move through a well-defined set of states — from submission on the server, through execution on the client, to cleanup. Transitions are driven entirely by async background workers.
@@ -323,7 +323,8 @@
 
   text(fill: fg,      weight: "bold")[Queued],     [Job received and waiting for dispatch],                                              text(fill: comment)[Processing],
   text(fill: fg,      weight: "bold")[Processing],  [Server is sending job to a client],                                                  text(fill: comment)[Submitted],
-  text(fill: fg,      weight: "bold")[Submitted],   [Job successfully sent to client, awaiting execution],                                text(fill: comment)[Running],
+  text(fill: fg,      weight: "bold")[Submitted],   [Job successfully sent to client, awaiting execution],                                text(fill: comment)[Prepared],
+  text(fill: fg,      weight: "bold")[Prepared],    [Payload received by client, ready to execute],                                       text(fill: comment)[Running / Invalid / Failed],
   text(fill: fg,      weight: "bold")[Running],     [Client is actively executing the job],                                               text(fill: comment)[Completed / Failed / Invalid / Killed],
   text(fill: green,   weight: "bold")[Completed],   [Job finished successfully, results available],                                       text(fill: comment)[Cleaned],
   text(fill: red,     weight: "bold")[Failed],      [Job failed permanently — non-zero exit code],                                        text(fill: comment)[Cleaned],
@@ -331,7 +332,7 @@
   text(fill: comment, weight: "bold")[Killed],      [Job was manually terminated via API],                                                text(fill: comment)[Cleaned],
   text(fill: comment, weight: "bold")[Cleaned],     [Job data removed after retention period],                                            text(fill: comment)[—],
   text(fill: comment, weight: "bold")[Locked],      [Temporarily locked during termination or dispatch],                                  text(fill: comment)[—],
-  text(fill: comment, weight: "bold")[Unknown],     [Temporary state when retrieval fails — will retry],                                  text(fill: comment)[Retried],
+  text(fill: comment, weight: "bold")[Unknown],     [Fallback when status cannot be parsed — retried on next poll cycle],                 text(fill: comment)[—],
 )
 
 #set text(size: 15pt)
@@ -501,7 +502,7 @@
     block(fill: surface, inset: 10pt, radius: 6pt)[
       #text(fill: comment, size: 12pt)[Design]
       #v(3pt)
-      #text(fill: fg, size: 13pt)[File-based IPC · 11-state machine]
+      #text(fill: fg, size: 13pt)[File-based IPC · 12-state machine]
     ],
     block(fill: surface, inset: 10pt, radius: 6pt)[
       #text(fill: comment, size: 12pt)[Production]
