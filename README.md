@@ -1,11 +1,12 @@
 # job-orchestrator
 
-![GitHub License](https://img.shields.io/github/license/rvhonorato/job-orchestrator)
-![GitHub Release](https://img.shields.io/github/v/release/rvhonorato/job-orchestrator)
-[![ci](https://github.com/rvhonorato/job-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/rvhonorato/job-orchestrator/actions/workflows/ci.yml)
-[![Codacy Badge](https://app.codacy.com/project/badge/Grade/7f2a8816886645d28cbaac0fead038f9)](https://app.codacy.com/gh/rvhonorato/job-orchestrator/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
+![Crates.io License](https://img.shields.io/crates/l/job-orchestrator)
 [![Crates.io](https://img.shields.io/crates/v/job-orchestrator)](https://crates.io/crates/job-orchestrator)
 [![Documentation](https://img.shields.io/badge/docs-mdbook-blue)](https://rvhonorato.me/job-orchestrator/)
+
+[![ci](https://github.com/rvhonorato/job-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/rvhonorato/job-orchestrator/actions/workflows/ci.yml)
+[![Codacy Badge](https://app.codacy.com/project/badge/Coverage/7f2a8816886645d28cbaac0fead038f9)](https://app.codacy.com/gh/rvhonorato/job-orchestrator/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_coverage)
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/7f2a8816886645d28cbaac0fead038f9)](https://app.codacy.com/gh/rvhonorato/job-orchestrator/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 
 > An asynchronous job orchestration system for managing and distributing
 > computational workloads across heterogeneous computing resources with
