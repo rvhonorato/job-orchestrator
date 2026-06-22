@@ -1,12 +1,14 @@
 # Slides
 
+A slide deck showcasing `job-orchestrator` — motivation, architecture, tech stack, scheduling design, job lifecycle, and production deployment.
+
+Built with [Typst](https://typst.app/) (no external packages required).
+
 ## Dependencies
 
 ```
 sudo pacman -S typst zathura zathura-pdf-mupdf noto-fonts
 ```
-
-The `oxdraw` Typst package is fetched automatically on first compile (requires internet access once, then cached locally).
 
 ## Build
 
@@ -14,9 +16,11 @@ The `oxdraw` Typst package is fetched automatically on first compile (requires i
 typst compile slides.typ slides.pdf
 ```
 
-## Watch mode
+## Watch mode (hot reload)
 
 ```
 zathura slides.pdf &
 typst watch slides.typ slides.pdf
 ```
+
+Zathura auto-refreshes the PDF on each recompile.
