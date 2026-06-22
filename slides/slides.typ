@@ -213,7 +213,7 @@
       #text(fill: teal, weight: "bold", size: 17pt)[job-orchestrator]
     ],
     text(fill: comment, size: 14pt)[
-      A simpler bash-over-SSH dispatch layer — rewritten from scratch for reliability and throughput at scale
+      A simpler HTTP-based job dispatch layer — rewritten from scratch for reliability and throughput at scale
     ],
   )
 ]
@@ -243,7 +243,7 @@
     block(fill: surface, inset: 12pt, radius: 8pt, width: 100%)[
       #text(fill: teal, weight: "bold")[SQLite]
       #h(6pt)
-      #text(fill: comment, size: 14pt)[Embedded database — persistent on server, in-memory on client]
+      #text(fill: comment, size: 14pt)[Embedded database — persistent on server, file-based on client (transient)]
     ],
     block(fill: surface, inset: 12pt, radius: 8pt, width: 100%)[
       #text(fill: teal, weight: "bold")[Async throughout]
@@ -378,7 +378,7 @@
     #bullet[Works with *kill* — `SIGTERM` triggers the trap, file is written]
     #bullet[PID reuse is safe — file check takes precedence over PID liveness]
     #bullet[No blocking wait — fits naturally into the async poll loop]
-    #bullet[Enforced server-side — no trap, no execution]
+    #bullet[Enforced client-side before execution — no trap, no execution]
   ],
 )
 
@@ -404,7 +404,7 @@
     #text(fill: orange, weight: "bold", size: 16pt)[Script validation — before any execution]
     #v(4pt)
     #bullet[UTF-8 validation + 20 MiB size limit — rejects binary payloads]
-    #bullet[Regex blocklist: `rm -rf`, `mkfs`, `dd`, sensitive paths (`/etc`, `/boot`, …)]
+    #bullet[Regex blocklist: `rm -rf`, `mkfs`, `dd`, sensitive paths (`/etc/passwd`, `/proc/`, `/sys/`, `~/.ssh/`, …)]
     #bullet[Path traversal sanitisation on upload (`../` stripping)]
   ],
 
