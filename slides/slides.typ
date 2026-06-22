@@ -1,20 +1,57 @@
 // job-orchestrator — slide deck
+// Build: typst compile slides.typ slides.pdf
+//  Dark:  typst compile slides.typ slides.pdf --input theme=dark   (default)
+//  Light: typst compile slides.typ slides-light.pdf --input theme=light
 
-// Oxocarbon palette
-#let bg      = rgb("#161616")
-#let surface = rgb("#262626")
-#let base02  = rgb("#393939")
-#let comment = rgb("#6f6f6f")
-#let fg      = rgb("#f2f4f8")
-#let teal    = rgb("#08bdba")
-#let cyan    = rgb("#33b1ff")
-#let blue    = rgb("#78a9ff")
-#let purple  = rgb("#be95ff")
-#let pink    = rgb("#ff7eb6")
-#let magenta = rgb("#ee5396")
-#let green   = rgb("#42be65")
-#let red     = rgb("#fa4d56")
-#let orange  = rgb("#ff832b")
+#let dark = sys.inputs.at("theme", default: "light") == "dark"
+
+// Oxocarbon dark palette (IBM Carbon dark)
+#let bg-d      = rgb("#161616")
+#let surface-d = rgb("#262626")
+#let base02-d  = rgb("#393939")
+#let comment-d = rgb("#6f6f6f")
+#let fg-d      = rgb("#f2f4f8")
+#let teal-d    = rgb("#08bdba")
+#let cyan-d    = rgb("#33b1ff")
+#let blue-d    = rgb("#78a9ff")
+#let purple-d  = rgb("#be95ff")
+#let pink-d    = rgb("#ff7eb6")
+#let magenta-d = rgb("#ee5396")
+#let green-d   = rgb("#42be65")
+#let red-d     = rgb("#fa4d56")
+#let orange-d  = rgb("#ff832b")
+
+// Oxocarbon light palette (IBM Carbon light)
+#let bg-l      = rgb("#ffffff")
+#let surface-l = rgb("#f4f4f4")
+#let base02-l  = rgb("#e0e0e0")
+#let comment-l = rgb("#525252")
+#let fg-l      = rgb("#161616")
+#let teal-l    = rgb("#007d79")
+#let cyan-l    = rgb("#0043ce")
+#let blue-l    = rgb("#0f62fe")
+#let purple-l  = rgb("#6929c4")
+#let pink-l    = rgb("#9f1853")
+#let magenta-l = rgb("#9f1853")
+#let green-l   = rgb("#198038")
+#let red-l     = rgb("#da1e28")
+#let orange-l  = rgb("#8a3800")
+
+// Active palette
+#let bg      = if dark { bg-d }      else { bg-l }
+#let surface = if dark { surface-d } else { surface-l }
+#let base02  = if dark { base02-d }  else { base02-l }
+#let comment = if dark { comment-d } else { comment-l }
+#let fg      = if dark { fg-d }      else { fg-l }
+#let teal    = if dark { teal-d }    else { teal-l }
+#let cyan    = if dark { cyan-d }    else { cyan-l }
+#let blue    = if dark { blue-d }    else { blue-l }
+#let purple  = if dark { purple-d }  else { purple-l }
+#let pink    = if dark { pink-d }    else { pink-l }
+#let magenta = if dark { magenta-d } else { magenta-l }
+#let green   = if dark { green-d }   else { green-l }
+#let red     = if dark { red-d }     else { red-l }
+#let orange  = if dark { orange-d }  else { orange-l }
 
 // ===========================================================================
 // global page settings

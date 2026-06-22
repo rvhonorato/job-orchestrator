@@ -12,15 +12,29 @@ sudo pacman -S typst zathura zathura-pdf-mupdf noto-fonts
 
 ## Build
 
-```
-typst compile slides.typ slides.pdf
+```bash
+# Both
+make
+
+# Light only
+make light
+# or: typst compile slides.typ slides-light.pdf --input theme=light
+
+# Dark only
+make dark
+# or: typst compile slides.typ slides-dark.pdf --input theme=dark
 ```
 
 ## Watch mode (hot reload)
 
-```
-zathura slides.pdf &
-typst watch slides.typ slides.pdf
+```bash
+# Light
+zathura slides-light.pdf &
+typst watch slides.typ slides-light.pdf --input theme=light
+
+# Dark
+zathura slides-dark.pdf &
+typst watch slides.typ slides-dark.pdf --input theme=dark
 ```
 
 Zathura auto-refreshes the PDF on each recompile.

@@ -1,9 +1,14 @@
-.PHONY: all clean
+.PHONY: all dark light clean
 
-all: slides.pdf
+all: light dark
 
-slides.pdf: slides.typ
-	typst compile slides.typ slides.pdf
+dark: slides-dark.pdf
+slides-dark.pdf: slides.typ
+	typst compile slides.typ slides-dark.pdf --input theme=dark
+
+light: slides-light.pdf
+slides-light.pdf: slides.typ
+	typst compile slides.typ slides-light.pdf --input theme=light
 
 clean:
-	rm -f slides.pdf
+	rm -f slides-light.pdf slides-dark.pdf
